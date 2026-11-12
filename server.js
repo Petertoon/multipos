@@ -16,9 +16,12 @@ const jsonLarge = express.json({ limit: '4mb' });
 app.use((req, res, next) => (req.path.endsWith('/image') ? jsonLarge : jsonSmall)(req, res, next));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
-// Camera barcode reader for the phone page, served from this app (no outside CDN needed).
-app.get('/vendor/html5-qrcode.min.js', (req, res) =>
-  res.sendFile(require.resolve('html5-qrcode/html5-qrcode.min.js')));
+// Barcode reader engine for the phone page, served from this app (no outside CDN needed).
+const vendorDir = (pkg) => path.join(__dirname, 'node_modules', pkg);
+app.get('/vendor/barcode-detector.js', (req, res) =>
+  res.sendFile(path.join(vendorDir('barcode-detector'), 'dist/iife/pure.js'), { maxAge: '7d' }));
+app.get('/vendor/zxing_reader.wasm', (req, res) =>
+  res.type('application/wasm').sendFile(path.join(vendorDir('zxing-wasm'), 'dist/reader/zxing_reader.wasm'), { maxAge: '7d' }));
 
 const IS_PROD = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 const SESSION_DAYS = 14;
