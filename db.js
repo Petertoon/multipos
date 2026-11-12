@@ -1,5 +1,7 @@
 // Database connection and schema. Tables are created automatically on startup.
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+// Keep plain dates (like a quote's "valid until") as "2026-11-26" instead of a time-zone-shifted timestamp.
+types.setTypeParser(1082, (v) => v);
 
 if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is not set. Add it in Render > Environment.');
@@ -105,8 +107,7 @@ ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_token TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sales_receipt_token ON sales(receipt_token) WHERE receipt_token IS NOT NULL;
 
 -- Split pay: each sale has one or more payments (cash + card, etc.).
-ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_payment_method_check;
-ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check CHECK (payment_method IN ('cash','card','other','split'));
+-- (The allowed payment types for sales/sale_payments are set once, further down.)
 CREATE TABLE IF NOT EXISTS sale_payments (
   id SERIAL PRIMARY KEY,
   sale_id INT NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
@@ -170,11 +171,7 @@ CREATE TABLE IF NOT EXISTS gift_cards (
   created_by INT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE sale_payments DROP CONSTRAINT IF EXISTS sale_payments_method_check;
-ALTER TABLE sale_payments ADD CONSTRAINT sale_payments_method_check CHECK (method IN ('cash','card','other','gift_card'));
 ALTER TABLE sale_payments ADD COLUMN IF NOT EXISTS gift_card_id INT REFERENCES gift_cards(id) ON DELETE SET NULL;
-ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_payment_method_check;
-ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check CHECK (payment_method IN ('cash','card','other','split','gift_card'));
 
 -- Money given back to customers (early rental returns): cash from the drawer, a gift card,
 -- or "check" = owed, kept on a ledger until the store mails a check.
@@ -199,6 +196,102 @@ CREATE TABLE IF NOT EXISTS refunds (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS refunds_business ON refunds(business_id, status, created_at);
+
+-- ===== Customers, charge accounts, quotes, checks, deposits =====
+CREATE TABLE IF NOT EXISTS customers (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  company TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  notes TEXT,
+  charge_account BOOLEAN NOT NULL DEFAULT FALSE,
+  credit_limit_cents INT,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS customers_business ON customers(business_id, name);
+
+-- What's being entered for the current sale on a register (customer, PO, job site).
+ALTER TABLE registers ADD COLUMN IF NOT EXISTS sale_info JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_id INT REFERENCES customers(id) ON DELETE SET NULL;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_phone TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS po_number TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS job_address TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS job_lat NUMERIC(9,6);
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS job_lng NUMERIC(9,6);
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS quote_id INT;
+
+-- Deposits made to the bank (cash + checks).
+CREATE TABLE IF NOT EXISTS deposits (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  location_id INT REFERENCES locations(id) ON DELETE SET NULL,
+  cash_cents INT NOT NULL DEFAULT 0,
+  cash_collected_cents INT NOT NULL DEFAULT 0,
+  checks_cents INT NOT NULL DEFAULT 0,
+  check_count INT NOT NULL DEFAULT 0,
+  note TEXT,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE sale_payments DROP CONSTRAINT IF EXISTS sale_payments_method_check;
+ALTER TABLE sale_payments ADD CONSTRAINT sale_payments_method_check CHECK (method IN ('cash','card','other','gift_card','check','account'));
+ALTER TABLE sale_payments ADD COLUMN IF NOT EXISTS check_number TEXT;
+ALTER TABLE sale_payments ADD COLUMN IF NOT EXISTS deposit_id INT REFERENCES deposits(id) ON DELETE SET NULL;
+ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_payment_method_check;
+ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check CHECK (payment_method IN ('cash','card','other','split','gift_card','check','account'));
+ALTER TABLE refunds ADD COLUMN IF NOT EXISTS deposit_id INT REFERENCES deposits(id) ON DELETE SET NULL;
+
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS deposit_account TEXT;
+
+-- Payments a customer makes toward their charge account balance.
+CREATE TABLE IF NOT EXISTS account_payments (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  location_id INT REFERENCES locations(id) ON DELETE SET NULL,
+  customer_id INT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  method TEXT NOT NULL CHECK (method IN ('cash','check','card','other')),
+  amount_cents INT NOT NULL CHECK (amount_cents > 0),
+  check_number TEXT,
+  note TEXT,
+  voided BOOLEAN NOT NULL DEFAULT FALSE,
+  deposit_id INT REFERENCES deposits(id) ON DELETE SET NULL,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS account_payments_customer ON account_payments(customer_id);
+
+-- Saved price quotes (the cart, customer and job details), found later by phone number.
+CREATE TABLE IF NOT EXISTS quotes (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  location_id INT REFERENCES locations(id) ON DELETE SET NULL,
+  customer_id INT REFERENCES customers(id) ON DELETE SET NULL,
+  customer_name TEXT,
+  customer_phone TEXT,
+  po_number TEXT,
+  job_address TEXT,
+  job_lat NUMERIC(9,6),
+  job_lng NUMERIC(9,6),
+  cart JSONB NOT NULL,
+  subtotal_cents INT NOT NULL,
+  tax_cents INT NOT NULL,
+  total_cents INT NOT NULL,
+  tax_rate NUMERIC(6,3) NOT NULL,
+  note TEXT,
+  valid_until DATE,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','sold','canceled')),
+  sale_id INT REFERENCES sales(id) ON DELETE SET NULL,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS quotes_business ON quotes(business_id, status, created_at);
 
 -- Items scanned at the register that aren't in Products yet, waiting for management.
 CREATE TABLE IF NOT EXISTS pending_items (
