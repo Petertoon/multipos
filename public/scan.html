@@ -1,1 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17201b">
+<title>MultiPOS Scanner</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding-bottom: 40px; }
+  .head { background: var(--top); color: #fff; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); display: flex; align-items: center; gap: 10px; }
+  .head .t { flex: 1; }
+  .head b { font-size: 18px; display: block; }
+  .head span { color: #b9cbbf; font-size: 14px; }
+  .head .help { background: rgba(255,255,255,.14); color: #fff; padding: 8px 12px; }
+  main { padding: 14px; max-width: 520px; margin: 0 auto; }
 
+  /* camera */
+  .cam { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cam .guide { position: absolute; left: 8%; right: 8%; top: 30%; bottom: 30%; border: 3px solid rgba(255,255,255,.9); border-radius: 10px; box-shadow: 0 0 0 999px rgba(0,0,0,.35); }
+  .cam .laser { position: absolute; left: 4%; right: 4%; top: 50%; height: 2px; background: #ff3b30; box-shadow: 0 0 8px #ff3b30; animation: laser 1.6s ease-in-out infinite; }
+  @keyframes laser { 0%, 100% { transform: translateY(-28px); } 50% { transform: translateY(28px); } }
+  .cam .hint { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: #fff; font-size: 14px; font-weight: 600; text-shadow: 0 1px 3px #000; }
+  .cam.hit .guide { border-color: #2ecc71; box-shadow: 0 0 0 999px rgba(46,204,113,.35); }
+  .cam .torch { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); color: #fff; padding: 8px 12px; font-size: 14px; border-radius: 99px; }
+  .cam .torch.on { background: #ffd60a; color: #000; }
+
+  /* camera button: green = off (tap to start), red = on (tap to stop) */
+  .cambtn { width: 100%; padding: 16px; font-size: 18px; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #fff; }
+  .cambtn.off { background: #1f8f4e; }
+  .cambtn.on { background: #c0392b; }
+  .cambtn.busy { background: #7a817c; }
+  .cambtn .dot { width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+  .cambtn.on .dot { animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .status { text-align: center; font-size: 14px; margin-top: 6px; font-weight: 600; }
+  .status.on { color: #c0392b; } .status.off { color: var(--muted); }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .row2 button { padding: 14px 8px; }
+  .result { margin-top: 12px; padding: 14px; border-radius: 12px; background: #fff; display: none; }
+  .result.ok { display: block; border-left: 6px solid var(--accent); }
+  .result.bad { display: block; border-left: 6px solid var(--danger); }
+  .result b { font-size: 18px; }
+  .panel { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; }
+  .panel h3 { margin: 0 0 8px; font-size: 16px; display: flex; justify-content: space-between; }
+  .item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); gap: 8px; }
+  .item:last-child { border-bottom: 0; }
+  .item .x { background: transparent; color: var(--danger); padding: 6px 10px; font-size: 18px; }
+  .tot { display: flex; justify-content: space-between; font-size: 22px; font-weight: 800; margin-top: 10px; }
+  .fatal { text-align: center; padding: 40px 20px; }
+  form.inline { display: none; }
+  form.inline.open { display: block; }
+  form.inline button { width: 100%; margin-top: 12px; padding: 14px; }
+  .tips ol { padding-left: 20px; margin: 6px 0; } .tips li { margin: 6px 0; }
+</style>
+</head>
+<body>
+<div class="head"><div class="t"><b id="bizName">MultiPOS Scanner</b><span id="regName">Connecting…</span></div>
+  <button class="help" onclick="toggleHelp()">How to scan</button></div>
+<main id="main">
+  <div class="panel tips" id="help" hidden>
+    <h3><span>How to scan</span></h3>
+    <ol>
+      <li>Tap the green <b>Start camera</b> button. Allow camera access if the phone asks.</li>
+      <li>The button turns <b>red</b> while the camera is on.</li>
+      <li>Hold the phone <b>4–8 inches</b> from the barcode, with the bars running <b>up and down</b> inside the white box.</li>
+      <li>Hold still for a second. A beep and a green flash mean it worked, and the item appears below and on the register.</li>
+      <li>"Not found" means that barcode isn't in Products yet. Add it there, or tap "Enter a price for it".</li>
+      <li>If it won't read: move a little farther back so it can focus, turn on the light, or tap <b>Type barcode</b> and type the numbers under the bars.</li>
+    </ol>
+  </div>
+
+  <div class="cam" id="cam" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <div class="guide"></div><div class="laser"></div>
+    <button class="torch" id="torchBtn" hidden>💡 Light</button>
+    <div class="hint" id="camHint">Line the barcode up inside the box</div>
+  </div>
+  <button class="cambtn off" id="camBtn"><span class="dot"></span><span id="camLabel">Start camera</span></button>
+  <div class="status off" id="camStatus">Camera is off</div>
+
+  <div class="row2">
+    <button onclick="toggleForm('typeForm')">Type barcode</button>
+    <button onclick="toggleForm('customForm')">Custom amount</button>
+  </div>
+
+  <form class="inline panel" id="typeForm">
+    <label for="code">Barcode number</label>
+    <input id="code" inputmode="numeric" autocomplete="off">
+    <button class="primary">Add to sale</button>
+  </form>
+
+  <form class="inline panel" id="customForm">
+    <label for="cName">Description</label>
+    <input id="cName" placeholder="Custom item" maxlength="120">
+    <label for="cPrice">Price</label>
+    <input id="cPrice" inputmode="decimal" placeholder="0.00">
+    <label for="cQty">Quantity</label>
+    <input id="cQty" type="number" inputmode="numeric" min="1" max="999" value="1">
+    <label class="check"><input type="checkbox" id="cTax" checked> Taxable</label>
+    <button class="primary">Add to sale</button>
+  </form>
+
+  <div class="result" id="result"></div>
+
+  <div class="panel">
+    <h3><span>Current sale</span><span class="muted" id="count"></span></h3>
+    <div id="items" class="muted">No items yet.</div>
+    <div class="tot"><span>Total</span><span id="total">$0.00</span></div>
+  </div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+const pairToken = location.hash.slice(1);
+let busy = false, lastCode = '', lastTime = 0, audio;
+
+function beep(ok = true) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = ok ? 1100 : 300; g.gain.value = 0.15;
+    o.connect(g); g.connect(audio.destination); o.start(); o.stop(audio.currentTime + (ok ? 0.12 : 0.3));
+  } catch (e) { /* no sound */ }
+  if (navigator.vibrate) navigator.vibrate(ok ? 60 : [80, 60, 80]);
+}
+function toggleHelp() { $('#help').hidden = !$('#help').hidden; }
+
+function render(data) {
+  const cart = data.cart || [], t = data.totals || {};
+  $('#count').textContent = t.item_count ? `${t.item_count} item${t.item_count === 1 ? '' : 's'}` : '';
+  $('#total').textContent = money(t.total_cents || 0);
+  $('#items').innerHTML = cart.length ? cart.slice().reverse().map((it) => `
+    <div class="item" data-key="${it.key}"><div><b>${esc(it.name)}</b><div class="muted">${it.qty} × ${money(it.unit_cents)}</div></div>
+    <div style="display:flex;align-items:center;gap:6px"><b class="money">${money(it.qty * it.unit_cents)}</b><button class="x" title="Remove">✕</button></div></div>`).join('')
+    : '<div class="muted">No items yet.</div>';
+}
+function showResult(kind, html) { const r = $('#result'); r.className = 'result ' + kind; r.innerHTML = html; }
+
+async function load() {
+  if (!pairToken) throw new Error('Open this page by scanning the QR code on the register.');
+  const d = await api('/api/pair/' + encodeURIComponent(pairToken));
+  applyBrand(d);
+  $('#bizName').textContent = d.business_name;
+  $('#regName').textContent = `${d.location_name} · ${d.register_name}`;
+  render(d);
+  // First visit on this phone: show the directions.
+  try { if (!localStorage.getItem('mp_scan_help_seen')) { $('#help').hidden = false; localStorage.setItem('mp_scan_help_seen', '1'); } } catch (e) { /* ok */ }
+}
+
+async function sendCode(code) {
+  code = code.trim(); if (!code || busy) return;
+  const now = Date.now();
+  if (code === lastCode && now - lastTime < 2500) return; // same item still in view
+  lastCode = code; lastTime = now; busy = true;
+  try {
+    const r = await api(`/api/pair/${encodeURIComponent(pairToken)}/scan`, { code });
+    render(r);
+    if (r.found) {
+      beep(true);
+      const pic = r.item.img ? `<img src="/api/pair/${encodeURIComponent(pairToken)}/products/${r.item.product_id}/image?v=${r.item.img}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px;flex:none">` : '';
+      showResult('ok', `<div style="display:flex;gap:12px;align-items:center">${pic}<div>Added <b>${esc(r.item.name)}</b> · ${money(r.item.unit_cents)}<div class="muted">Qty in sale: ${r.item.qty}</div></div></div>`);
+    } else {
+      beep(false);
+      showResult('bad', `<b>Not found</b><div class="muted">No product with barcode ${esc(code)}.</div>
+        <button class="primary" style="margin-top:10px;width:100%" data-code="${esc(code)}" onclick="customFor(this.dataset.code)">Enter a price for it</button>`);
+    }
+  } catch (e) { beep(false); showResult('bad', esc(e.message)); }
+  finally { busy = false; }
+}
+function customFor(code) {
+  toggleForm('customForm', true);
+  $('#cName').value = 'Item ' + code; $('#cPrice').value = ''; $('#cPrice').focus();
+}
+
+function toggleForm(id, forceOpen) {
+  const f = $('#' + id), open = forceOpen || !f.classList.contains('open');
+  $$('form.inline').forEach((x) => x.classList.remove('open'));
+  if (open) { f.classList.add('open'); f.querySelector('input').focus(); }
+}
+$('#typeForm').addEventListener('submit', (e) => {
+  e.preventDefault(); lastCode = ''; sendCode($('#code').value); $('#code').value = '';
+});
+$('#customForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const price = toCents($('#cPrice').value);
+  if (price === null) { showResult('bad', 'Enter a valid price, like 5.00'); return; }
+  try {
+    const r = await api(`/api/pair/${encodeURIComponent(pairToken)}/custom`,
+      { name: $('#cName').value, price_cents: price, qty: $('#cQty').value, taxable: $('#cTax').checked });
+    render(r); beep(true);
+    showResult('ok', `Added <b>${esc(r.item.name)}</b> · ${r.item.qty} × ${money(r.item.unit_cents)}`);
+    $('#customForm').reset(); $('#cQty').value = 1; $('#cTax').checked = true;
+    $('#customForm').classList.remove('open');
+  } catch (err) { showResult('bad', esc(err.message)); }
+});
+$('#items').addEventListener('click', async (e) => {
+  const b = e.target.closest('.x'); if (!b) return;
+  try { render(await api(`/api/pair/${encodeURIComponent(pairToken)}/remove`, { key: b.closest('.item').dataset.key })); }
+  catch (err) { showResult('bad', esc(err.message)); }
+});
+
+// ---------- camera ----------
+const FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
+let stream = null, track = null, detector = null, loopTimer = null, torchOn = false, camState = 'off';
+
+function setCamState(s, statusText) {
+  camState = s;
+  const btn = $('#camBtn');
+  btn.className = 'cambtn ' + (s === 'on' ? 'on' : s === 'off' ? 'off' : 'busy');
+  btn.disabled = s === 'starting';
+  $('#camLabel').textContent = { off: 'Start camera', starting: 'Starting camera…', on: 'Stop camera' }[s];
+  $('#camStatus').className = 'status ' + (s === 'on' ? 'on' : 'off');
+  $('#camStatus').textContent = statusText || { off: 'Camera is off', starting: 'Turning camera on…', on: '● Camera is on, scanning' }[s];
+  $('#cam').hidden = s === 'off';
+}
+
+// Uses the phone's built-in barcode reader when it has one (most Android phones),
+// otherwise a bundled reader engine (iPhones and others).
+async function getDetector() {
+  if (detector) return detector;
+  if ('BarcodeDetector' in window) {
+    try {
+      const supported = await window.BarcodeDetector.getSupportedFormats();
+      const formats = FORMATS.filter((f) => supported.includes(f));
+      if (formats.includes('ean_13')) return (detector = new window.BarcodeDetector({ formats }));
+    } catch (e) { /* fall back */ }
+  }
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script'); s.src = '/vendor/barcode-detector.js';
+    s.onload = resolve; s.onerror = () => reject(new Error('Scanner could not load. Check the internet connection.'));
+    document.head.appendChild(s);
+  });
+  BarcodeDetectionAPI.setZXingModuleOverrides({ locateFile: (p, prefix) => p.endsWith('.wasm') ? '/vendor/zxing_reader.wasm' : prefix + p });
+  return (detector = new BarcodeDetectionAPI.BarcodeDetector({ formats: FORMATS }));
+}
+
+async function setTorch(on) {
+  if (!track) return false;
+  try { await track.applyConstraints({ advanced: [{ torch: on }] }); torchOn = on; }
+  catch (e) { torchOn = false; return false; }
+  $('#torchBtn').classList.toggle('on', torchOn);
+  $('#torchBtn').textContent = torchOn ? '💡 Light on' : '💡 Light off';
+  return true;
+}
+$('#torchBtn').onclick = () => setTorch(!torchOn);
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showResult('bad', 'This browser cannot use the camera. Open the link in Safari (iPhone) or Chrome (Android), or use "Type barcode".');
+    return;
+  }
+  setCamState('starting');
+  try {
+    const [s] = await Promise.all([
+      navigator.mediaDevices.getUserMedia({ audio: false, video: {
+        facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } }),
+      getDetector(),
+    ]);
+    stream = s; track = stream.getVideoTracks()[0];
+    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* not supported */ }
+    const v = $('#video'); v.srcObject = stream; await v.play().catch(() => {});
+    setCamState('on');
+    // Turn the light on automatically when the phone allows it.
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.torch) { $('#torchBtn').hidden = false; await setTorch(true); }
+    else $('#torchBtn').hidden = true;
+    $('#camHint').textContent = caps.torch ? 'Line the barcode up inside the box' : 'Line the barcode up inside the box · use good light';
+    scanLoop();
+  } catch (e) {
+    stopCamera();
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    showResult('bad', denied
+      ? '<b>Camera blocked.</b><div class="muted">Allow camera access for this site in your browser settings, then tap Start camera again. Or use "Type barcode".</div>'
+      : `<b>Camera did not start.</b><div class="muted">${esc(e.message || e)}</div>`);
+  }
+}
+
+function stopCamera() {
+  clearTimeout(loopTimer); loopTimer = null;
+  if (stream) stream.getTracks().forEach((t) => t.stop()); // also turns the light off
+  stream = null; track = null; torchOn = false;
+  $('#video').srcObject = null; $('#torchBtn').hidden = true;
+  setCamState('off');
+}
+
+// Reads only the area inside the white box, about 6 times a second.
+const crop = document.createElement('canvas');
+async function scanLoop() {
+  if (camState !== 'on') return;
+  const v = $('#video');
+  try {
+    if (v.readyState >= 2 && v.videoWidth && !busy) {
+      // The white box covers the middle 84% across and 40% down of what's shown on screen.
+      const vw = v.videoWidth, vh = v.videoHeight, box = $('#cam').getBoundingClientRect();
+      const scale = Math.max(box.width / vw, box.height / vh); // object-fit: cover
+      const shownW = box.width / scale, shownH = box.height / scale;
+      const sx = (vw - shownW) / 2 + shownW * 0.04, sw = shownW * 0.92;
+      const sy = (vh - shownH) / 2 + shownH * 0.25, sh = shownH * 0.5;
+      const maxW = 1280, k = Math.min(1, maxW / sw);
+      crop.width = Math.round(sw * k); crop.height = Math.round(sh * k);
+      crop.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+      const found = await detector.detect(crop);
+      if (found.length && found[0].rawValue) {
+        $('#cam').classList.add('hit'); setTimeout(() => $('#cam').classList.remove('hit'), 400);
+        await sendCode(found[0].rawValue);
+      }
+    }
+  } catch (e) { /* keep trying */ }
+  loopTimer = setTimeout(scanLoop, 160);
+}
+
+$('#camBtn').addEventListener('click', () => (camState === 'on' ? stopCamera() : startCamera()));
+// Save battery: turn the camera (and light) off when the phone screen is switched away.
+document.addEventListener('visibilitychange', () => { if (document.hidden && camState === 'on') stopCamera(); });
+
+// Keep the list in step with changes made at the register.
+setInterval(() => { if (!busy && pairToken && !document.hidden) api('/api/pair/' + encodeURIComponent(pairToken)).then(render).catch(() => {}); }, 4000);
+
+load().catch((e) => {
+  $('#main').innerHTML = `<div class="fatal"><h2>Scanner not connected</h2><p class="muted">${esc(e.message)}</p></div>`;
+  $('#regName').textContent = '';
+});
+</script>
+</body>
+</html>
