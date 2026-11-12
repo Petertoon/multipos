@@ -51,6 +51,9 @@
   .phone button { padding: 6px 10px; font-size: 13px; }
   .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #aaa; margin-right: 6px; }
   .live.on { background: #2ecc71; }
+  label.report { background: #fff4d6; border-radius: 8px; padding: 10px; margin-top: 14px; }
+  .photorow { display: flex; align-items: center; gap: 10px; }
+  .photorow img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; }
   .bigchange { font-size: 44px; font-weight: 800; text-align: center; margin: 10px 0; font-variant-numeric: tabular-nums; }
   .quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
   @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; } body { height: auto; } .grid { max-height: none; } }
@@ -105,8 +108,9 @@
 <!-- custom amount -->
 <div class="modal-back" id="customModal">
   <form class="modal" id="customForm">
-    <h2>Custom amount</h2>
-    <div class="muted">For items without a barcode.</div>
+    <h2 id="cTitle">Custom amount</h2>
+    <div class="muted" id="cSub">For items without a barcode.</div>
+    <input type="hidden" id="cBarcode">
     <label for="cName">Description</label>
     <input id="cName" placeholder="Custom item" maxlength="120">
     <label for="cPrice">Price</label>
@@ -114,7 +118,17 @@
     <label for="cQty">Quantity</label>
     <input id="cQty" type="number" min="1" max="999" value="1">
     <label class="check"><input type="checkbox" id="cTax" checked> Taxable</label>
-    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Add to sale</button></div>
+    <label class="check report"><input type="checkbox" id="cReport"> Send to management to add to products</label>
+    <div id="cPhotoBox" hidden>
+      <label>Photo of the item (optional)</label>
+      <div class="photorow">
+        <img id="cPhotoImg" alt="" hidden>
+        <button type="button" id="cPhotoBtn">Choose photo</button>
+        <button type="button" class="ghost" id="cPhotoClear" hidden>Remove</button>
+      </div>
+      <input type="file" id="cPhotoFile" accept="image/*" hidden>
+    </div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary" id="cSubmit">Add to sale</button></div>
   </form>
 </div>
 
@@ -160,7 +174,14 @@ async function start() {
   $('#bizName').textContent = me.business.name;
   if (me.business.logo_url) { $('#logo').src = me.business.logo_url; $('#logo').hidden = false; }
   $('#userName').textContent = me.user.name;
-  if (me.user.role !== 'cashier') $('#adminLink').hidden = false;
+  if (me.user.role !== 'cashier') {
+    $('#adminLink').hidden = false;
+    const showCount = () => api('/api/pending/count').then((r) => {
+      $('#adminLink').innerHTML = 'Manage' + (r.pending_count ? ` <span class="badge" title="Items waiting to be added to Products">${r.pending_count}</span>` : '');
+      $('#adminLink').href = r.pending_count ? '/admin#pending' : '/admin';
+    }).catch(() => {});
+    showCount(); setInterval(showCount, 60000);
+  }
 
   const regs = (await api('/api/registers')).filter((r) => r.active);
   if (!regs.length) { $('#cart').innerHTML = '<div class="empty">No registers yet. Add a location in Manage.</div>'; return; }
@@ -258,6 +279,7 @@ $('#scan').addEventListener('keydown', async (e) => {
       const matches = products.filter((p) => p.name.toLowerCase().includes(v.toLowerCase()));
       if (matches.length === 1) { await cartCall('product', { product_id: matches[0].id }); }
       else if (matches.length > 1) { category = 'All'; renderProducts(matches); toast(`${matches.length} matches below`); }
+      else if (/^[0-9A-Za-z\-]{6,}$/.test(v) && /\d/.test(v)) { toast(`Barcode ${v} is not in Products`, 'bad'); openCustom(v); }
       else { toast(`No product found for "${v}"`, 'bad'); }
     }
   } catch (err) { toast(err.message, 'bad'); }
@@ -281,18 +303,48 @@ function focusScan() { if (!document.querySelector('.modal-back.open')) $('#scan
 function closeModals() { $$('.modal-back').forEach((m) => m.classList.remove('open')); focusScan(); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModals(); });
 
-function openCustom() {
+// Custom amount, or (with a barcode) an item that isn't in Products yet.
+let cPhoto = null;
+function openCustom(barcode) {
+  barcode = typeof barcode === 'string' ? barcode : '';
   $('#customForm').reset(); $('#cQty').value = 1; $('#cTax').checked = true;
-  $('#customModal').classList.add('open'); $('#cPrice').focus();
+  $('#cBarcode').value = barcode;
+  $('#cTitle').textContent = barcode ? 'Item not in the system' : 'Custom amount';
+  $('#cSub').textContent = barcode ? `Barcode ${barcode} is not in Products. Add it to this sale with a price.` : 'For items without a barcode.';
+  $('#cName').placeholder = barcode ? 'What is it?' : 'Custom item';
+  $('#cReport').checked = !!barcode;
+  setCPhoto(null); updateReport();
+  $('#customModal').classList.add('open'); (barcode ? $('#cName') : $('#cPrice')).focus();
 }
+function setCPhoto(d) {
+  cPhoto = d; $('#cPhotoImg').hidden = !d; if (d) $('#cPhotoImg').src = d;
+  $('#cPhotoClear').hidden = !d; $('#cPhotoBtn').textContent = d ? 'Change photo' : 'Choose photo';
+}
+function updateReport() {
+  $('#cPhotoBox').hidden = !$('#cReport').checked;
+  $('#cSubmit').textContent = $('#cReport').checked ? 'Add & send to management' : 'Add to sale';
+}
+$('#cReport').addEventListener('change', updateReport);
+$('#cPhotoBtn').addEventListener('click', () => $('#cPhotoFile').click());
+$('#cPhotoClear').addEventListener('click', () => setCPhoto(null));
+$('#cPhotoFile').addEventListener('change', async () => {
+  const f = $('#cPhotoFile').files[0]; $('#cPhotoFile').value = '';
+  if (f) try { setCPhoto(await resizeImage(f)); } catch (e) { toast(e.message, 'bad'); }
+});
 $('#customForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const price = toCents($('#cPrice').value);
   if (price === null) { toast('Enter a valid price', 'bad'); return; }
+  const report = $('#cReport').checked;
+  if (report && !$('#cName').value.trim()) { toast('Type a short description for management', 'bad'); $('#cName').focus(); return; }
+  const body = { name: $('#cName').value, price_cents: price, qty: $('#cQty').value, taxable: $('#cTax').checked, barcode: $('#cBarcode').value };
+  $('#cSubmit').disabled = true;
   try {
-    await cartCall('custom', { name: $('#cName').value, price_cents: price, qty: $('#cQty').value, taxable: $('#cTax').checked });
+    await cartCall(report ? 'pending' : 'custom', report ? { ...body, photo: cPhoto } : body);
+    if (report) toast('Added · sent to management');
     closeModals();
   } catch (err) { toast(err.message, 'bad'); }
+  finally { $('#cSubmit').disabled = false; }
 });
 
 function openPay(method) {
