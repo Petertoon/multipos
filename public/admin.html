@@ -360,13 +360,14 @@ async function showSales() {
     <div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Time</th><th>Location</th><th>Cashier</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
     ${data.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.location_name)} · ${esc(s.register_name || '')}</td>
       <td>${esc(s.cashier || '')}</td><td>${esc(s.payment_method)}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
-      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
+      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button class="wa" data-wa="${s.id}">WhatsApp</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No sales in this period.</td></tr>'}</tbody></table></div>`;
   const refresh = () => { salesFilter = { from: $('#sFrom').value, to: $('#sTo').value, location_id: $('#sLoc').value }; showSales(); };
   $('#sFrom').onchange = refresh; $('#sTo').onchange = refresh; $('#sLoc').onchange = refresh;
   $('#view').onclick = async (e) => {
     const t = e.target;
     if (t.dataset.receipt) window.open('/receipt?id=' + t.dataset.receipt, '_blank', 'width=420,height=700');
+    if (t.dataset.wa) openWhatsAppDialog(t.dataset.wa);
     if (t.dataset.void && confirm(`Void sale #${t.dataset.void}? It will be removed from the totals and tracked stock is put back.`)) {
       try { await api(`/api/sales/${t.dataset.void}/void`, {}); toast('Sale voided'); showSales(); } catch (err) { toast(err.message, 'bad'); }
     }
