@@ -52,7 +52,28 @@
   .paysum .due b { color: #c0392b; }
   .paidrow { display: flex; justify-content: space-between; align-items: center; background: #eef7f1; border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; }
   .paidrow .del { padding: 2px 8px; }
-  .seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+  .seg button:disabled { opacity: .4; }
+  .salebar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .salebar .spacer { flex: 1; }
+  .chip { background: #fff; border: 1px solid var(--line); padding: 7px 12px; font-size: 14px; border-radius: 99px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip.set { background: #eaf4ff; border-color: #9cc3f0; color: #174a83; }
+  .chip.acct { background: #fff4d6; border-color: #e9c46a; color: #6b4c00; }
+  .chip.fee { background: #f4f5f3; }
+  .chip.quote { background: #f2e6ff; color: #5b2a86; border-color: #d9c2ef; }
+  .seg3 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .seg3.two { grid-template-columns: 1fr 1fr; }
+  .seg3 button { background: #fff; border: 1px solid var(--line); padding: 9px; }
+  .seg3 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; align-items: end; }
+  .custform { background: #f7f8f6; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  .custform h3 { margin: 0; }
+  #custList, #qList { margin-top: 10px; max-height: 50vh; overflow: auto; }
+  #custList td button, #qList td button { padding: 7px 10px; font-size: 13px; }
+  .acctpill { display: inline-block; background: #fff4d6; color: #6b4c00; border-radius: 99px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+  .rowbtns { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .rowbtns button { padding: 7px 12px; font-size: 14px; }
+  .expired { color: #c0392b; font-weight: 700; }
   .rentbtn { background: #fff3e0; color: #8a4b00; }
   .tile.rent { border-color: #f0c27a; background: #fffaf2; }
   .tile.rent span { color: #8a4b00; font-weight: 600; }
@@ -112,6 +133,16 @@
       <button onclick="openCustom()">+ Custom amount</button>
       <button class="rentbtn" id="rentBtn" hidden onclick="openRent()">🔑 Rent</button>
       <button class="rentbtn" id="rentalsOutBtn" hidden onclick="openRentalsOut()">Rentals out</button>
+    </div>
+    <div class="salebar" id="saleBar">
+      <button type="button" class="chip" id="custChip">👤 Customer</button>
+      <button type="button" class="chip" id="poChip">PO #</button>
+      <button type="button" class="chip" id="jobChip">📍 Job site</button>
+      <span class="spacer"></span>
+      <button type="button" class="chip fee" onclick="openFee('delivery')">🚚 Delivery fee</button>
+      <button type="button" class="chip fee" onclick="openFee('fuel')">⛽ Fuel charge</button>
+      <button type="button" class="chip quote" onclick="openSaveQuote()">📝 Save as quote</button>
+      <button type="button" class="chip quote" onclick="openQuotes()">📂 Quotes</button>
     </div>
     <div class="cart" id="cart"></div>
     <div class="tabs" id="tabs"></div>
@@ -180,7 +211,8 @@
     </div>
     <div id="paidList"></div>
     <div class="seg" id="paySeg">
-      <button type="button" data-m="cash">Cash</button><button type="button" data-m="card">Card</button><button type="button" data-m="gift_card">Gift card</button><button type="button" data-m="other">Other</button>
+      <button type="button" data-m="cash">Cash</button><button type="button" data-m="card">Card</button><button type="button" data-m="check">Check</button>
+      <button type="button" data-m="account">Charge account</button><button type="button" data-m="gift_card">Gift card</button><button type="button" data-m="other">Other</button>
     </div>
     <label for="payAmt">Amount for this payment</label>
     <div class="amtrow"><input id="payAmt" inputmode="decimal" autocomplete="off"><button type="button" class="ghost" id="splitBtn">Split evenly…</button></div>
@@ -192,7 +224,9 @@
       <div class="row" style="margin-top:12px;font-size:20px;display:flex;justify-content:space-between"><span>Change</span><b id="changeDue">$0.00</b></div>
     </div>
     <div id="cardBox" class="muted">Run this amount on your card terminal. When it is approved, press the button below.</div>
-    <div id="otherBox" class="muted">Record a payment taken another way (check, transfer, app).</div>
+    <div id="otherBox" class="muted">Record a payment taken another way (transfer, app).</div>
+    <div id="checkBox"><label for="checkNum">Check number</label><input id="checkNum" maxlength="40" autocomplete="off"></div>
+    <div id="acctBox"></div>
     <div id="giftBox">
       <label for="giftCodeIn">Gift card number</label>
       <div class="amtrow"><input id="giftCodeIn" placeholder="GC-XXXX-XXXX" autocomplete="off" style="text-transform:uppercase"><button type="button" class="ghost" id="giftCheck">Check balance</button></div>
@@ -204,6 +238,105 @@
 </div>
 
 <!-- done -->
+<!-- choose / add a customer -->
+<div class="modal-back" id="custModal">
+  <div class="modal wide">
+    <div class="outhead"><h2>Customer</h2><button type="button" class="primary" id="custNewBtn">+ New customer</button></div>
+    <input id="custSearch" placeholder="Search name, company or phone" autocomplete="off">
+    <div id="custList"></div>
+    <form id="custForm" class="custform" hidden>
+      <h3 id="custFormTitle">New customer</h3>
+      <div class="grid2">
+        <div><label for="cfName">Name</label><input id="cfName" required maxlength="120"></div>
+        <div><label for="cfCompany">Company (optional)</label><input id="cfCompany" maxlength="120"></div>
+        <div><label for="cfPhone">Phone</label><input id="cfPhone" type="tel" inputmode="tel" maxlength="40"></div>
+        <div><label for="cfEmail">Email (optional)</label><input id="cfEmail" type="email" maxlength="120"></div>
+      </div>
+      <label for="cfAddress">Address (optional)</label><input id="cfAddress" maxlength="300">
+      <div id="cfAccountBox" hidden class="grid2">
+        <label class="check"><input type="checkbox" id="cfAccount"> Charge account</label>
+        <div><label for="cfLimit">Credit limit (blank = no limit)</label><input id="cfLimit" inputmode="decimal"></div>
+      </div>
+      <div class="err" id="cfErr"></div>
+      <div class="actions"><button type="button" class="ghost" id="cfCancel">Cancel</button><button class="primary">Save & use for this sale</button></div>
+    </form>
+    <div class="actions"><button type="button" class="ghost" id="custRemove" hidden>Remove customer from sale</button><button type="button" class="ghost" onclick="closeModals()">Close</button></div>
+  </div>
+</div>
+
+<!-- payment on a charge account -->
+<div class="modal-back" id="acctPayModal">
+  <form class="modal" id="acctPayForm">
+    <h2>Payment on account</h2>
+    <div id="apInfo" class="retcard"></div>
+    <label for="apAmt">Amount paid</label><input id="apAmt" inputmode="decimal" required>
+    <label>Paid with</label>
+    <div class="seg3" id="apSeg"><button type="button" data-m="cash" class="on">Cash</button><button type="button" data-m="check">Check</button><button type="button" data-m="card">Card</button><button type="button" data-m="other">Other</button></div>
+    <div id="apCheckBox" hidden><label for="apCheck">Check number</label><input id="apCheck" maxlength="40"></div>
+    <label for="apNote">Note (optional)</label><input id="apNote" maxlength="300">
+    <div class="err" id="apErr"></div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Record payment</button></div>
+  </form>
+</div>
+
+<!-- PO number & job site -->
+<div class="modal-back" id="jobModal">
+  <form class="modal" id="jobForm">
+    <h2>PO & job site</h2>
+    <label for="jPo">PO number</label><input id="jPo" maxlength="60" autocomplete="off">
+    <label for="jAddr">Job site address (where the equipment will be)</label><input id="jAddr" maxlength="300" autocomplete="off">
+    <div class="rowbtns"><button type="button" class="ghost" id="jUseCust" hidden>Use customer's address</button></div>
+    <label for="jGps">GPS location (optional)</label>
+    <input id="jGps" placeholder="30.2672, -97.7431 or paste a Google Maps link" autocomplete="off">
+    <div class="rowbtns"><button type="button" class="ghost" id="jHere">📍 Use this device's location</button><a id="jMap" target="_blank" rel="noopener" hidden>Open in Google Maps ↗</a></div>
+    <div class="muted" style="font-size:13px">Tip: on a phone at the job site, open Google Maps, tap the blue dot, and copy the numbers, or use the button above on that phone.</div>
+    <div class="err" id="jErr"></div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Save</button></div>
+  </form>
+</div>
+
+<!-- delivery fee / fuel charge -->
+<div class="modal-back" id="feeModal">
+  <form class="modal" id="feeForm">
+    <h2 id="feeTitle">Delivery fee</h2>
+    <label for="feeName">Description</label><input id="feeName" maxlength="120">
+    <label>Amount</label>
+    <div class="seg3 two" id="feeMode"><button type="button" data-k="amt" class="on">Dollar amount</button><button type="button" data-k="pct">% of items</button></div>
+    <input id="feeAmt" inputmode="decimal" placeholder="0.00" style="margin-top:8px">
+    <div class="muted" id="feeCalc" style="font-size:13px;margin-top:4px"></div>
+    <label class="check"><input type="checkbox" id="feeTax"> Taxable</label>
+    <div class="err" id="feeErr"></div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Add to sale</button></div>
+  </form>
+</div>
+
+<!-- save the sale as a quote -->
+<div class="modal-back" id="saveQuoteModal">
+  <form class="modal" id="saveQuoteForm">
+    <h2>Save as quote</h2>
+    <div class="muted" id="sqSummary"></div>
+    <div id="sqWho">
+      <label for="sqName">Customer name</label><input id="sqName" maxlength="120">
+      <label for="sqPhone">Customer phone (used to find the quote later)</label><input id="sqPhone" type="tel" inputmode="tel" maxlength="40">
+    </div>
+    <label for="sqDays">Price good for how many days?</label><input id="sqDays" type="number" min="1" max="365" value="30">
+    <label for="sqNote">Note on the quote (optional)</label><input id="sqNote" maxlength="500" placeholder="e.g. Delivery Tuesday morning">
+    <div class="err" id="sqErr"></div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Save quote</button></div>
+  </form>
+</div>
+
+<!-- quotes list -->
+<div class="modal-back" id="quotesModal">
+  <div class="modal wide">
+    <div class="outhead"><h2>Quotes</h2>
+      <div class="seg2" id="qTabs"><button type="button" data-st="open" class="on">Open</button><button type="button" data-st="sold">Sold</button><button type="button" data-st="canceled">Canceled</button></div></div>
+    <input id="qSearch" placeholder="Search phone, name, PO or quote #" autocomplete="off">
+    <div id="qList"></div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Close</button></div>
+  </div>
+</div>
+
 <!-- rent an item (prepaid) -->
 <div class="modal-back" id="rentModal">
   <form class="modal" id="rentForm">
@@ -331,6 +464,7 @@ async function start() {
 async function loadRegister() {
   const s = await api(`/api/registers/${registerId}/state`);
   state = s;
+  saleInfo = s.sale_info || {}; renderSaleBar();
   $('#tTaxLabel').textContent = `Sales tax (${s.register.tax_rate}%)`;
   renderCart();
   $('#qr').innerHTML = s.pair_qr_svg;
@@ -351,6 +485,7 @@ function connect() {
       if (d.source === 'phone' && d.event && d.event.kind === 'added') toast('Phone: added ' + d.event.name);
     }
     if (d.type === 'paired-reset') loadRegister();
+    if (d.type === 'sale-info') { saleInfo = d.info || {}; renderSaleBar(); }
   };
 }
 function newestKey(before, after) {
@@ -513,6 +648,17 @@ function renderPay() {
   $$('#paySeg button').forEach((b) => b.classList.toggle('on', b.dataset.m === payMethod));
   $('#cashBox').hidden = payMethod !== 'cash'; $('#cardBox').hidden = payMethod !== 'card'; $('#otherBox').hidden = payMethod !== 'other';
   $('#giftBox').hidden = payMethod !== 'gift_card';
+  $('#checkBox').hidden = payMethod !== 'check';
+  $('#acctBox').hidden = payMethod !== 'account';
+  const cust = saleInfo.customer;
+  const acctOk = !!(cust && cust.charge_account);
+  $('#paySeg [data-m=account]').disabled = !acctOk;
+  $('#paySeg [data-m=account]').title = acctOk ? '' : 'Choose a customer with a charge account first';
+  if (payMethod === 'account' && cust) {
+    const room = cust.credit_limit_cents == null ? null : cust.credit_limit_cents - cust.balance_cents;
+    $('#acctBox').innerHTML = `<div class="retcard">Charge to <b>${esc(cust.name)}</b>${cust.company ? ' · ' + esc(cust.company) : ''}
+      <div>Balance now ${money(cust.balance_cents)}${room == null ? ' · no credit limit' : ` · ${money(Math.max(0, room))} left of ${money(cust.credit_limit_cents)} limit`}</div></div>`;
+  }
   // Quick cash buttons based on this payment's amount.
   const base = amt || bal;
   const opts = [base, Math.ceil(base / 500) * 500, Math.ceil(base / 1000) * 1000, Math.ceil(base / 2000) * 2000, 5000, 10000]
@@ -520,7 +666,8 @@ function renderPay() {
   $('#quick').innerHTML = opts.map((v) => `<button type="button" data-v="${v}">${v === base ? 'Exact' : money(v)}</button>`).join('');
   updateChange();
   const left = bal - amt;
-  $('#payBtn').textContent = amt > 0 && left > 0 ? `Add ${PAY_NAMES[payMethod]} payment · ${money(left)} left` : 'Complete sale';
+  $('#payBtn').textContent = amt > 0 && left > 0 ? `Add ${PAY_NAMES[payMethod]} payment · ${money(left)} left`
+    : payMethod === 'account' && !paid.length ? 'Charge to account' : 'Complete sale';
   if (split) $('#splitInfo').textContent = `Split ${split.shares.length} ways · person ${Math.min(split.idx + 1, split.shares.length)} of ${split.shares.length}`;
 }
 function updateChange() {
@@ -529,7 +676,9 @@ function updateChange() {
 }
 $('#paySeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return; payMethod = b.dataset.m; renderPay();
-  if (payMethod === 'gift_card') { $('#giftBal').textContent = ''; $('#giftCodeIn').value = ''; $('#giftCodeIn').focus(); } else $('#payAmt').focus();
+  if (payMethod === 'gift_card') { $('#giftBal').textContent = ''; $('#giftCodeIn').value = ''; $('#giftCodeIn').focus(); }
+  else if (payMethod === 'check') { $('#checkNum').value = ''; $('#checkNum').focus(); }
+  else $('#payAmt').focus();
 });
 // Looks up a gift card; fills the amount with what it can cover.
 async function checkGift() {
@@ -586,6 +735,15 @@ $('#payForm').addEventListener('submit', async (e) => {
     if (amt > g.balance_cents - used) { $('#payErr').textContent = `This gift card only has ${money(g.balance_cents - used)}`; return; }
     p.gift_code = g.code;
   }
+  if (payMethod === 'check') p.check_number = $('#checkNum').value.trim();
+  if (payMethod === 'account') {
+    const cust = saleInfo.customer;
+    if (!cust || !cust.charge_account) { $('#payErr').textContent = 'Choose a customer with a charge account first'; return; }
+    const already = paid.filter((x) => x.method === 'account').reduce((a, x) => a + x.amount_cents, 0);
+    if (cust.credit_limit_cents != null && cust.balance_cents + already + amt > cust.credit_limit_cents) {
+      $('#payErr').textContent = `That goes over ${cust.name}'s ${money(cust.credit_limit_cents)} credit limit`; return;
+    }
+  }
   if (payMethod === 'cash') {
     const t = $('#tendered').value.trim() ? toCents($('#tendered').value) : amt;
     if (t === null) { $('#payErr').textContent = 'Enter a valid cash amount'; return; }
@@ -604,7 +762,7 @@ $('#payForm').addEventListener('submit', async (e) => {
   $('#payBtn').disabled = true;
   try {
     const r = await api(`/api/registers/${registerId}/checkout`,
-      { payments: paid.map(({ method, amount_cents, tendered_cents, gift_code }) => ({ method, amount_cents, tendered_cents, gift_code })) });
+      { payments: paid.map(({ method, amount_cents, tendered_cents, gift_code, check_number }) => ({ method, amount_cents, tendered_cents, gift_code, check_number })) });
     state.cart = []; state.totals = { subtotal_cents: 0, tax_cents: 0, total_cents: 0, item_count: 0 }; renderCart();
     $('#payModal').classList.remove('open');
     // Change from cash parts already given out during a split was shown as it happened.
@@ -619,6 +777,267 @@ $('#payForm').addEventListener('submit', async (e) => {
     products = await api('/api/products'); renderProducts();
   } catch (err) { paid.pop(); renderPay(); $('#payErr').textContent = err.message; }
   finally { $('#payBtn').disabled = false; }
+});
+
+// ================= Sale details: customer, PO, job site =================
+let saleInfo = {};
+function renderSaleBar() {
+  const c = saleInfo.customer;
+  const cc = $('#custChip');
+  const name = c ? c.name : saleInfo.customer_name;
+  cc.textContent = name ? `👤 ${name}${c && c.charge_account ? ` · acct ${money(c.balance_cents)}` : ''}` : '👤 Customer';
+  cc.className = 'chip' + (c && c.charge_account ? ' acct' : name ? ' set' : '');
+  $('#poChip').textContent = saleInfo.po_number ? `PO # ${saleInfo.po_number}` : 'PO #';
+  $('#poChip').className = 'chip' + (saleInfo.po_number ? ' set' : '');
+  const gps = saleInfo.job_lat != null && saleInfo.job_lng != null;
+  $('#jobChip').textContent = saleInfo.job_address ? `📍 ${saleInfo.job_address}` : gps ? `📍 GPS ${Number(saleInfo.job_lat).toFixed(4)}, ${Number(saleInfo.job_lng).toFixed(4)}` : '📍 Job site';
+  $('#jobChip').className = 'chip' + (saleInfo.job_address || gps ? ' set' : '');
+  if (saleInfo.quote_id) { $('#poChip').textContent = `Quote #${saleInfo.quote_id} · ` + $('#poChip').textContent; $('#poChip').className = 'chip set'; }
+}
+// Saves sale details for this register; pass only what changes.
+async function saveInfo(patch) {
+  const next = { customer_id: saleInfo.customer_id || null, customer_name: saleInfo.customer_name || null,
+    customer_phone: saleInfo.customer_phone || null, po_number: saleInfo.po_number || null, job_address: saleInfo.job_address || null,
+    job_lat: saleInfo.job_lat ?? null, job_lng: saleInfo.job_lng ?? null, quote_id: saleInfo.quote_id || null, ...patch };
+  saleInfo = await api(`/api/registers/${registerId}/sale-info`, next, 'PUT');
+  renderSaleBar();
+}
+$('#custChip').onclick = () => openCustomers();
+$('#poChip').onclick = () => openJob('po');
+$('#jobChip').onclick = () => openJob('job');
+
+// ----- customers -----
+let custRows = [], editingCust = null, custTimer;
+async function openCustomers() {
+  $('#custModal').classList.add('open'); $('#custForm').hidden = true; $('#custSearch').value = '';
+  $('#custRemove').hidden = !(saleInfo.customer_id || saleInfo.customer_name);
+  await searchCustomers(); $('#custSearch').focus();
+}
+async function searchCustomers() {
+  try { custRows = await api('/api/customers?q=' + encodeURIComponent($('#custSearch').value.trim())); } catch (e) { toast(e.message, 'bad'); return; }
+  $('#custList').innerHTML = custRows.length ? `<table class="list"><thead><tr><th>Customer</th><th>Phone</th><th>Account</th><th></th></tr></thead><tbody>${
+    custRows.map((c) => `<tr><td><b>${esc(c.name)}</b>${c.company ? `<div class="muted" style="font-size:12px">${esc(c.company)}</div>` : ''}</td>
+      <td>${esc(c.phone || '')}</td>
+      <td>${c.charge_account ? `<span class="acctpill">Charge acct</span><div style="font-size:13px">Balance ${money(c.balance_cents)}${c.credit_limit_cents != null ? ` / ${money(c.credit_limit_cents)}` : ''}</div>` : '<span class="muted">—</span>'}</td>
+      <td style="white-space:nowrap"><button class="primary" data-use="${c.id}">Use</button> <button class="ghost" data-edit="${c.id}">Edit</button>
+        ${c.charge_account ? ` <button class="ghost" data-pay="${c.id}">Take payment</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">No customers found. Add a new one.</p>';
+}
+$('#custSearch').addEventListener('input', () => { clearTimeout(custTimer); custTimer = setTimeout(searchCustomers, 250); });
+$('#custList').addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const c = custRows.find((x) => String(x.id) === (b.dataset.use || b.dataset.edit || b.dataset.pay));
+  if (b.dataset.use) {
+    try { await saveInfo({ customer_id: c.id, customer_name: null, customer_phone: null }); closeModals(); toast(`Customer: ${c.name}`); }
+    catch (err) { toast(err.message, 'bad'); }
+  } else if (b.dataset.edit) showCustForm(c);
+  else if (b.dataset.pay) openAcctPay(c);
+});
+function showCustForm(c) {
+  editingCust = c || null;
+  $('#custFormTitle').textContent = c ? `Edit ${c.name}` : 'New customer';
+  $('#cfName').value = c ? c.name : $('#custSearch').value.replace(/[\d()+\- ]{7,}/, '').trim();
+  $('#cfCompany').value = c ? c.company || '' : ''; $('#cfEmail').value = c ? c.email || '' : ''; $('#cfAddress').value = c ? c.address || '' : '';
+  const typedPhone = /[\d()+\- ]{7,}/.exec($('#custSearch').value);
+  $('#cfPhone').value = c ? c.phone || '' : (typedPhone ? typedPhone[0].trim() : '');
+  $('#cfAccountBox').hidden = me.user.role === 'cashier';
+  $('#cfAccount').checked = !!(c && c.charge_account);
+  $('#cfLimit').value = c && c.credit_limit_cents != null ? (c.credit_limit_cents / 100).toFixed(2) : '';
+  $('#cfErr').textContent = ''; $('#custForm').hidden = false; $('#cfName').focus();
+}
+$('#custNewBtn').onclick = () => showCustForm(null);
+$('#cfCancel').onclick = () => { $('#custForm').hidden = true; };
+$('#custForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('#cfErr').textContent = '';
+  const limit = $('#cfLimit').value.trim() ? toCents($('#cfLimit').value) : null;
+  if ($('#cfLimit').value.trim() && limit === null) { $('#cfErr').textContent = 'Credit limit must be an amount like 2500.00'; return; }
+  const body = { name: $('#cfName').value, company: $('#cfCompany').value, phone: $('#cfPhone').value, email: $('#cfEmail').value,
+    address: $('#cfAddress').value, charge_account: $('#cfAccount').checked, credit_limit_cents: limit, notes: editingCust ? editingCust.notes : null };
+  try {
+    const id = editingCust ? (await api('/api/customers/' + editingCust.id, body, 'PUT'), editingCust.id) : (await api('/api/customers', body)).id;
+    await saveInfo({ customer_id: id, customer_name: null, customer_phone: null });
+    closeModals(); toast(editingCust ? 'Customer updated' : 'Customer added to this sale');
+  } catch (err) { $('#cfErr').textContent = err.message; }
+});
+$('#custRemove').onclick = async () => { await saveInfo({ customer_id: null, customer_name: null, customer_phone: null }); closeModals(); };
+
+// ----- payment on a charge account -----
+let acctCust = null, apMethod = 'cash';
+function openAcctPay(c) {
+  acctCust = c; apMethod = 'cash';
+  $('#acctPayForm').reset(); $('#apErr').textContent = '';
+  $('#apInfo').innerHTML = `<b>${esc(c.name)}</b>${c.company ? ' · ' + esc(c.company) : ''}<div>Balance owed: <b>${money(c.balance_cents)}</b></div>`;
+  $('#apAmt').value = c.balance_cents > 0 ? (c.balance_cents / 100).toFixed(2) : '';
+  syncAp(); $('#custModal').classList.remove('open'); $('#acctPayModal').classList.add('open'); $('#apAmt').select();
+}
+function syncAp() { $$('#apSeg button').forEach((b) => b.classList.toggle('on', b.dataset.m === apMethod)); $('#apCheckBox').hidden = apMethod !== 'check'; }
+$('#apSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; apMethod = b.dataset.m; syncAp(); });
+$('#acctPayForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const amt = toCents($('#apAmt').value); if (!amt) { $('#apErr').textContent = 'Enter the amount paid'; return; }
+  try {
+    await api(`/api/customers/${acctCust.id}/payments`, { method: apMethod, amount_cents: amt, check_number: $('#apCheck').value,
+      note: $('#apNote').value, location_id: state.register.location_id });
+    closeModals(); toast(`Payment recorded. ${acctCust.name}'s balance is now ${money(acctCust.balance_cents - amt)}`);
+    if (saleInfo.customer_id === acctCust.id) saveInfo({});
+  } catch (err) { $('#apErr').textContent = err.message; }
+});
+
+// ----- PO & job site -----
+// Accepts "30.2672, -97.7431" or a Google Maps link containing @lat,lng or q=lat,lng.
+function parseGps(s) {
+  s = String(s || '').trim(); if (!s) return null;
+  const m = /(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/.exec(decodeURIComponent(s));
+  if (!m) return undefined;
+  const lat = Number(m[1]), lng = Number(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : undefined;
+}
+function syncMapLink() {
+  const g = parseGps($('#jGps').value);
+  const link = mapLink(g ? g.lat : null, g ? g.lng : null, $('#jAddr').value.trim());
+  $('#jMap').hidden = !link; if (link) $('#jMap').href = link;
+}
+function openJob(focus) {
+  $('#jPo').value = saleInfo.po_number || ''; $('#jAddr').value = saleInfo.job_address || '';
+  $('#jGps').value = saleInfo.job_lat != null ? `${saleInfo.job_lat}, ${saleInfo.job_lng}` : '';
+  const c = saleInfo.customer; $('#jUseCust').hidden = !(c && c.address);
+  $('#jErr').textContent = ''; syncMapLink();
+  $('#jobModal').classList.add('open'); (focus === 'job' ? $('#jAddr') : $('#jPo')).focus();
+}
+$('#jGps').addEventListener('input', syncMapLink); $('#jAddr').addEventListener('input', syncMapLink);
+$('#jUseCust').onclick = () => { $('#jAddr').value = saleInfo.customer.address; syncMapLink(); };
+$('#jHere').onclick = () => {
+  if (!navigator.geolocation) { $('#jErr').textContent = 'This device cannot share its location'; return; }
+  $('#jHere').disabled = true; $('#jHere').textContent = 'Finding location…';
+  navigator.geolocation.getCurrentPosition((pos) => {
+    $('#jGps').value = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`; syncMapLink();
+    $('#jHere').disabled = false; $('#jHere').textContent = '📍 Use this device\'s location';
+  }, () => {
+    $('#jErr').textContent = 'Could not get the location. Allow location access, or type/paste the GPS numbers.';
+    $('#jHere').disabled = false; $('#jHere').textContent = '📍 Use this device\'s location';
+  }, { enableHighAccuracy: true, timeout: 15000 });
+};
+$('#jobForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const g = parseGps($('#jGps').value);
+  if (g === undefined) { $('#jErr').textContent = 'GPS should look like 30.2672, -97.7431 (or paste a Google Maps link)'; return; }
+  try {
+    await saveInfo({ po_number: $('#jPo').value.trim() || null, job_address: $('#jAddr').value.trim() || null,
+      job_lat: g ? g.lat : null, job_lng: g ? g.lng : null });
+    closeModals();
+  } catch (err) { $('#jErr').textContent = err.message; }
+});
+
+// ----- delivery fee & fuel charge -----
+let feeKind = 'delivery', feeMode = 'amt';
+function feeDefaults() { try { return JSON.parse(localStorage.getItem('mp_fees_' + me.business.id) || '{}'); } catch (e) { return {}; } }
+function itemsSubtotal() { return state.cart.filter((it) => !/^(Delivery fee|Fuel charge)/.test(it.name)).reduce((a, it) => a + it.unit_cents * it.qty, 0); }
+function openFee(kind) {
+  feeKind = kind; const d = feeDefaults()[kind] || {};
+  feeMode = d.mode || (kind === 'fuel' ? 'pct' : 'amt');
+  $('#feeTitle').textContent = kind === 'fuel' ? 'Fuel charge' : 'Delivery fee';
+  $('#feeName').value = kind === 'fuel' ? 'Fuel charge' : 'Delivery fee';
+  $('#feeAmt').value = d.value != null ? d.value : '';
+  $('#feeTax').checked = d.taxable != null ? d.taxable : true;
+  $('#feeErr').textContent = ''; syncFee();
+  $('#feeModal').classList.add('open'); $('#feeAmt').select();
+}
+function feeCents() {
+  const v = $('#feeAmt').value.trim();
+  if (feeMode === 'amt') return toCents(v);
+  const pct = Number(v); if (!(pct > 0 && pct <= 100)) return null;
+  return Math.round(itemsSubtotal() * pct / 100);
+}
+function syncFee() {
+  $$('#feeMode button').forEach((b) => b.classList.toggle('on', b.dataset.k === feeMode));
+  $('#feeAmt').placeholder = feeMode === 'amt' ? '0.00' : 'e.g. 3.5';
+  const c = feeCents();
+  $('#feeCalc').textContent = feeMode === 'pct' ? `${$('#feeAmt').value || 0}% of ${money(itemsSubtotal())} in items = ${money(c || 0)}` : '';
+}
+$('#feeMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; feeMode = b.dataset.k; syncFee(); $('#feeAmt').focus(); });
+$('#feeAmt').addEventListener('input', syncFee);
+$('#feeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const c = feeCents(); if (!c) { $('#feeErr').textContent = feeMode === 'pct' ? 'Enter a percent, and add items first' : 'Enter the amount'; return; }
+  const label = $('#feeName').value.trim() || $('#feeTitle').textContent;
+  const name = feeMode === 'pct' ? `${label} (${$('#feeAmt').value.trim()}%)` : label;
+  try {
+    await cartCall('custom', { name, price_cents: c, qty: 1, taxable: $('#feeTax').checked });
+    // Remember the last amount used for next time on this computer.
+    const all = feeDefaults(); all[feeKind] = { mode: feeMode, value: $('#feeAmt').value.trim(), taxable: $('#feeTax').checked };
+    try { localStorage.setItem('mp_fees_' + me.business.id, JSON.stringify(all)); } catch (err) { /* ok */ }
+    closeModals();
+  } catch (err) { $('#feeErr').textContent = err.message; }
+});
+
+// ----- quotes -----
+function openSaveQuote() {
+  if (!state.cart.length) { toast('Add items first, then save them as a quote', 'bad'); return; }
+  const c = saleInfo.customer;
+  $('#saveQuoteForm').reset(); $('#sqDays').value = 30; $('#sqErr').textContent = '';
+  $('#sqSummary').textContent = `${state.totals.item_count} items · ${money(state.totals.total_cents)}${c ? ' · for ' + c.name : ''}`;
+  $('#sqWho').hidden = !!(c && c.phone);
+  if (!c) { $('#sqName').value = saleInfo.customer_name || ''; $('#sqPhone').value = saleInfo.customer_phone || ''; }
+  else { $('#sqName').value = c.name; $('#sqPhone').value = c.phone || ''; }
+  $('#saveQuoteModal').classList.add('open'); ($('#sqWho').hidden ? $('#sqNote') : $('#sqName')).focus();
+}
+$('#saveQuoteForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('#sqErr').textContent = '';
+  try {
+    const r = await api(`/api/registers/${registerId}/quote`, { customer_name: $('#sqName').value, customer_phone: $('#sqPhone').value,
+      valid_days: $('#sqDays').value, note: $('#sqNote').value });
+    closeModals();
+    state.cart = []; state.totals = { subtotal_cents: 0, tax_cents: 0, total_cents: 0, item_count: 0 }; renderCart();
+    saleInfo = {}; renderSaleBar();
+    toast(`Quote #${r.quote_id} saved`);
+    openQuotes(String(r.quote_id));
+  } catch (err) { $('#sqErr').textContent = err.message; }
+});
+let qStatus = 'open', qRows = [], qTimer;
+async function openQuotes(search) {
+  $('#quotesModal').classList.add('open'); $('#qSearch').value = search || '';
+  if (search) qStatus = 'open';
+  await loadQuotes(); if (!search) $('#qSearch').focus();
+}
+async function loadQuotes() {
+  $$('#qTabs button').forEach((b) => b.classList.toggle('on', b.dataset.st === qStatus));
+  try { qRows = await api(`/api/quotes?status=${qStatus}&q=${encodeURIComponent($('#qSearch').value.trim())}`); } catch (e) { toast(e.message, 'bad'); return; }
+  $('#qList').innerHTML = qRows.length ? `<table class="list"><thead><tr><th>#</th><th>Customer</th><th>PO / job</th><th class="num">Total</th><th>Good until</th><th></th></tr></thead><tbody>${
+    qRows.map((q) => `<tr><td><b>${q.id}</b><div class="muted" style="font-size:12px">${new Date(q.created_at).toLocaleDateString()}</div></td>
+      <td>${esc(q.customer_name || '')}<div class="muted" style="font-size:12px">${esc(q.customer_phone || '')}</div></td>
+      <td>${q.po_number ? 'PO ' + esc(q.po_number) : ''}<div class="muted" style="font-size:12px">${esc(q.job_address || '')}</div></td>
+      <td class="num"><b>${money(q.total_cents)}</b><div class="muted" style="font-size:12px">${q.line_count} lines</div></td>
+      <td class="${q.expired && q.status === 'open' ? 'expired' : ''}">${q.valid_until ? new Date(q.valid_until + 'T12:00:00').toLocaleDateString() : ''}${q.expired && q.status === 'open' ? '<div style="font-size:12px">Expired</div>' : ''}</td>
+      <td style="white-space:nowrap">${q.status === 'open' ? `<button class="primary" data-load="${q.id}">Ring up</button> ` : ''}
+        <button class="ghost" data-print="${q.id}">Print</button> <button class="wa" data-wa="${q.id}">WhatsApp</button>
+        ${q.status === 'open' ? ` <button class="ghost" data-cancel="${q.id}">Cancel</button>` : ''}
+        ${q.sale_id ? `<div class="muted" style="font-size:12px">Sale #${q.sale_id}</div>` : ''}</td></tr>`).join('')}</tbody></table>`
+    : `<p class="muted">No ${qStatus} quotes${$('#qSearch').value.trim() ? ' match that search' : ''}.</p>`;
+}
+$('#qSearch').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(loadQuotes, 250); });
+$('#qTabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; qStatus = b.dataset.st; loadQuotes(); });
+$('#qList').addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.load) {
+      const q = qRows.find((x) => String(x.id) === b.dataset.load);
+      if (q.expired && !confirm(`Quote #${q.id} has expired. Ring it up at the quoted prices anyway?`)) return;
+      let r;
+      try { r = await api(`/api/quotes/${q.id}/load`, { register_id: Number(registerId) }); }
+      catch (err) {
+        if (!/already has items/.test(err.message) || !confirm('This register already has items. Replace them with the quote?')) throw err;
+        r = await api(`/api/quotes/${q.id}/load`, { register_id: Number(registerId), replace: true });
+      }
+      state.cart = r.cart; state.totals = r.totals; renderCart(); saleInfo = r.sale_info; renderSaleBar();
+      closeModals(); toast(`Quote #${q.id} loaded. Take payment to finish.${r.tax_changed ? ' Note: the tax rate changed since the quote.' : ''}`);
+    }
+    if (b.dataset.print) window.open('/quote?id=' + b.dataset.print, '_blank', 'width=420,height=700');
+    if (b.dataset.wa) {
+      const q = await api('/api/quotes/' + b.dataset.wa);
+      openWhatsAppDialog({ title: 'Send quote on WhatsApp', info: `Quote #${q.id} · ${money(q.total_cents)}`, text: quoteText(q), phone: q.customer_phone });
+    }
+    if (b.dataset.cancel && confirm(`Cancel quote #${b.dataset.cancel}?`)) { await api(`/api/quotes/${b.dataset.cancel}/cancel`, {}); loadQuotes(); }
+  } catch (err) { toast(err.message, 'bad'); }
 });
 
 // ================= Rentals =================
@@ -651,6 +1070,10 @@ async function openRent(productId) {
   $('#rItem').innerHTML = rentItems.map((p) => `<option value="${p.id}">${esc(p.name)} (${Math.max(0, p.rental_units - p.units_out)} of ${p.rental_units} available)</option>`).join('');
   if (productId) $('#rItem').value = String(productId);
   rentPeriod = null; renderRent(true);
+  // Use the sale's customer if one is chosen.
+  const sc = saleInfo.customer;
+  if (sc) { $('#rName').value = sc.name; $('#rPhone').value = sc.phone || ''; }
+  else if (saleInfo.customer_name) { $('#rName').value = saleInfo.customer_name; $('#rPhone').value = saleInfo.customer_phone || ''; }
   $('#rentModal').classList.add('open'); $('#rName').focus();
 }
 function currentRentItem() { return rentItems.find((p) => String(p.id) === $('#rItem').value); }
