@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Your receipt</title>
+<link rel="stylesheet" href="/receipt.css">
+<style>
+  body { background: #f3f4f1; padding: 16px 0; }
+  .r { background: #fff; width: 360px; padding: 18px 16px; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,.06); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="r" id="r">Loading…</div>
+<div class="noprint"><button onclick="print()">Print or save as PDF</button></div>
+<script src="/app.js"></script>
+<script>
+// Customer view: /r#<private code> from the WhatsApp message. No login needed.
+window.addEventListener('hashchange', () => location.reload());
+(async () => {
+  const t = location.hash.slice(1);
+  const s = await api('/api/receipt/' + encodeURIComponent(t));
+  document.title = `Receipt #${s.id} · ${s.business_name}`;
+  $('#r').innerHTML = receiptHtml(s);
+})().catch(() => { $('#r').innerHTML = '<div class="c"><h1>Receipt not found</h1><p>Check the link in your message.</p></div>'; });
+</script>
+</body>
+</html>
