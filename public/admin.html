@@ -23,6 +23,10 @@
   .tablewrap { overflow-x: auto; }
   td button { padding: 6px 10px; font-size: 14px; }
   .settings { background: #fff; border-radius: 10px; padding: 18px; max-width: 520px; margin-bottom: 14px; }
+  .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #eef1ec; display: block; }
+  .thumb.none { display: flex; align-items: center; justify-content: center; color: #aab; font-size: 20px; }
+  .photo-preview { width: 100%; max-height: 280px; object-fit: contain; background: #f4f5f3; border-radius: 10px; margin: 10px 0; }
+  .photo-actions { display: grid; gap: 8px; }
 </style>
 </head>
 <body>
@@ -40,6 +44,20 @@
 <main id="view"></main>
 
 <div class="modal-back" id="formModal"><form class="modal" id="form"></form></div>
+
+<div class="modal-back" id="photoModal">
+  <div class="modal">
+    <h2 id="photoTitle">Product photo</h2>
+    <img id="photoPreview" class="photo-preview" alt="" hidden>
+    <div id="photoNone" class="muted" style="margin:10px 0">No photo yet.</div>
+    <div class="photo-actions">
+      <button class="primary" id="photoPick">Choose or take a photo</button>
+      <button class="ghost" id="photoRemove">Remove photo</button>
+    </div>
+    <input type="file" id="photoFile" accept="image/*" hidden>
+    <div class="actions"><button type="button" class="ghost" id="photoClose">Done</button></div>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 <script>
@@ -136,11 +154,13 @@ async function showProducts() {
   const list = await api('/api/products?all=1&q=' + encodeURIComponent(productQuery));
   $('#view').innerHTML = `<div class="bar"><h2>Products</h2><input id="pq" placeholder="Search name, barcode, category" value="${esc(productQuery)}">
     ${canEdit ? '<button class="primary" id="addProd">+ Add product</button>' : ''}</div>
-    <div class="tablewrap"><table class="list"><thead><tr><th>Product</th><th>Barcode</th><th>Category</th><th class="num">Price</th><th>Tax</th><th class="num">Stock</th><th></th></tr></thead><tbody>
-    ${list.map((p) => `<tr class="${p.active ? '' : 'off'}"><td><b>${esc(p.name)}</b>${p.active ? '' : ' <span class="pill off">Hidden</span>'}</td><td>${esc(p.barcode || '')}</td><td>${esc(p.category || '')}</td>
+    <div class="tablewrap"><table class="list"><thead><tr><th></th><th>Product</th><th>Barcode</th><th>Category</th><th class="num">Price</th><th>Tax</th><th class="num">Stock</th><th></th></tr></thead><tbody>
+    ${list.map((p) => `<tr class="${p.active ? '' : 'off'}">
+      <td>${p.has_image ? `<img class="thumb" src="${productImg(p.id, p.image_version)}" alt="" loading="lazy">` : '<div class="thumb none">📷</div>'}</td>
+      <td><b>${esc(p.name)}</b>${p.active ? '' : ' <span class="pill off">Hidden</span>'}</td><td>${esc(p.barcode || '')}</td><td>${esc(p.category || '')}</td>
       <td class="num">${money(p.price_cents)}</td><td>${p.taxable ? 'Yes' : 'No'}</td><td class="num">${p.track_stock ? p.stock_qty : '—'}</td>
-      <td>${canEdit ? `<button data-edit="${p.id}">Edit</button>` : ''}</td></tr>`).join('')
-      || '<tr><td colspan="7" class="muted">No products found.</td></tr>'}</tbody></table></div>`;
+      <td style="white-space:nowrap">${canEdit ? `<button data-edit="${p.id}">Edit</button> <button data-photo="${p.id}">Photo</button>` : ''}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted">No products found.</td></tr>'}</tbody></table></div>`;
   let t; $('#pq').oninput = () => { clearTimeout(t); t = setTimeout(() => { productQuery = $('#pq').value; showProducts().then(() => { const q = $('#pq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
   const fields = [
     { name: 'name', label: 'Product name', required: true },
@@ -153,14 +173,58 @@ async function showProducts() {
     { name: 'active', label: 'Show at checkout', type: 'check' },
   ];
   if (canEdit) $('#addProd').onclick = async () => {
-    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0 }, (v) => api('/api/products', v))) showProducts();
+    let newId;
+    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0 },
+      async (v) => { newId = (await api('/api/products', v)).id; })) {
+      await showProducts();
+      const p = (await api('/api/products?all=1')).find((x) => x.id === newId);
+      if (p && confirm('Add a photo for ' + p.name + '?')) openPhoto(p);
+    }
   };
   $('#view').onclick = async (e) => {
+    const ph = e.target.closest('[data-photo]');
+    if (ph) { openPhoto(list.find((x) => x.id === Number(ph.dataset.photo))); return; }
     const b = e.target.closest('[data-edit]'); if (!b) return;
     const p = list.find((x) => x.id === Number(b.dataset.edit));
     if (await saveLoop('Edit product', fields, p, (v) => api('/api/products/' + p.id, v, 'PUT'))) showProducts();
   };
 }
+
+// ---------- product photo ----------
+let photoProduct = null, photoChanged = false;
+function showPhotoState() {
+  const p = photoProduct;
+  $('#photoTitle').textContent = 'Photo: ' + p.name;
+  $('#photoPreview').hidden = !p.has_image; $('#photoNone').hidden = p.has_image;
+  $('#photoRemove').hidden = !p.has_image;
+  if (p.has_image) $('#photoPreview').src = productImg(p.id, p.image_version);
+}
+function openPhoto(p) {
+  photoProduct = { ...p }; photoChanged = false;
+  showPhotoState(); $('#photoModal').classList.add('open');
+}
+$('#photoPick').onclick = () => $('#photoFile').click();
+$('#photoFile').onchange = async () => {
+  const file = $('#photoFile').files[0]; $('#photoFile').value = '';
+  if (!file) return;
+  $('#photoPick').disabled = true; $('#photoPick').textContent = 'Uploading…';
+  try {
+    const dataUrl = await resizeImage(file);
+    await api(`/api/products/${photoProduct.id}/image`, { data_url: dataUrl }, 'PUT');
+    photoProduct.has_image = true; photoProduct.image_version = Date.now(); photoChanged = true;
+    $('#photoPreview').src = dataUrl; showPhotoState(); $('#photoPreview').src = dataUrl;
+    toast('Photo saved');
+  } catch (e) { toast(e.message, 'bad'); }
+  finally { $('#photoPick').disabled = false; $('#photoPick').textContent = 'Choose or take a photo'; }
+};
+$('#photoRemove').onclick = async () => {
+  if (!confirm('Remove this photo?')) return;
+  try {
+    await api(`/api/products/${photoProduct.id}/image`, undefined, 'DELETE');
+    photoProduct.has_image = false; photoChanged = true; showPhotoState(); toast('Photo removed');
+  } catch (e) { toast(e.message, 'bad'); }
+};
+$('#photoClose').onclick = () => { $('#photoModal').classList.remove('open'); if (photoChanged) showProducts(); };
 
 // ---------- locations & registers ----------
 async function showLocations() {
