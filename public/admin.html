@@ -27,6 +27,16 @@
   .thumb.none { display: flex; align-items: center; justify-content: center; color: #aab; font-size: 20px; }
   .photo-preview { width: 100%; max-height: 280px; object-fit: contain; background: #f4f5f3; border-radius: 10px; margin: 10px 0; }
   .photo-actions { display: grid; gap: 8px; }
+  .badge { background: #e74c3c; color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
+  .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .pcard { background: #fff; border-radius: 10px; padding: 12px; display: flex; gap: 12px; }
+  .pcard > img, .pnone { width: 110px; height: 110px; border-radius: 8px; object-fit: cover; flex: none; background: #eef1ec; }
+  .pnone { display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 28px; color: #9aa; }
+  .pnone span { font-size: 12px; }
+  .pbody { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .pact { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .pact button { padding: 8px 12px; font-size: 14px; }
+  .warn { background: #fff4d6; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
   .photofield { display: flex; gap: 12px; align-items: center; }
   .photofield img { width: 84px; height: 84px; border-radius: 10px; object-fit: cover; background: #eef1ec; flex: none; }
   .photofield .thumb { width: 84px; height: 84px; font-size: 28px; flex: none; }
@@ -69,11 +79,24 @@ let me, role;
 const TABS = [
   { id: 'businesses', label: 'Businesses', show: () => me.user.role === 'admin' && !me.business },
   { id: 'products', label: 'Products', show: () => !!me.business },
+  { id: 'pending', label: 'Pending items', show: () => !!me.business },
   { id: 'locations', label: 'Locations', show: () => !!me.business },
   { id: 'employees', label: 'Employees', show: () => !!me.business },
   { id: 'sales', label: 'Sales', show: () => !!me.business },
   { id: 'settings', label: 'Settings', show: () => true },
 ];
+const PRODUCT_FORM = [
+  { name: 'name', label: 'Product name', required: true },
+  { name: 'photo', label: 'Photo', type: 'photo' },
+  { name: 'barcode', label: 'Barcode (UPC / EAN / QR text)', hint: 'Leave blank for items without a barcode. A USB scanner can type it here.' },
+  { name: 'category', label: 'Category', hint: 'Shown as a tab on the checkout screen, e.g. Drinks' },
+  { name: 'price_cents', label: 'Price', type: 'money', required: true },
+  { name: 'taxable', label: 'Taxable', type: 'check' },
+  { name: 'track_stock', label: 'Track stock for this product', type: 'check' },
+  { name: 'stock_qty', label: 'Quantity in stock', type: 'number' },
+  { name: 'active', label: 'Show at checkout', type: 'check' },
+];
+let pendingCount = 0;
 
 // ---------- generic form modal ----------
 // fields: {name, label, type: text|email|password|money|number|check|select|color, options, required, hint}
@@ -190,17 +213,7 @@ async function showProducts() {
       <td style="white-space:nowrap">${canEdit ? `<button data-edit="${p.id}">Edit</button> <button data-photo="${p.id}">Photo</button>` : ''}</td></tr>`).join('')
       || '<tr><td colspan="8" class="muted">No products found.</td></tr>'}</tbody></table></div>`;
   let t; $('#pq').oninput = () => { clearTimeout(t); t = setTimeout(() => { productQuery = $('#pq').value; showProducts().then(() => { const q = $('#pq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
-  const fields = [
-    { name: 'name', label: 'Product name', required: true },
-    { name: 'photo', label: 'Photo', type: 'photo' },
-    { name: 'barcode', label: 'Barcode (UPC / EAN / QR text)', hint: 'Leave blank for items without a barcode. A USB scanner can type it here.' },
-    { name: 'category', label: 'Category', hint: 'Shown as a tab on the checkout screen, e.g. Drinks' },
-    { name: 'price_cents', label: 'Price', type: 'money', required: true },
-    { name: 'taxable', label: 'Taxable', type: 'check' },
-    { name: 'track_stock', label: 'Track stock for this product', type: 'check' },
-    { name: 'stock_qty', label: 'Quantity in stock', type: 'number' },
-    { name: 'active', label: 'Show at checkout', type: 'check' },
-  ];
+  const fields = PRODUCT_FORM;
   // Saves the product, then its photo (if a new one was picked or it was removed).
   async function savePhoto(id, photo) {
     if (photo === 'remove') await api(`/api/products/${id}/image`, undefined, 'DELETE');
@@ -267,6 +280,49 @@ $('#photoRemove').onclick = async () => {
   } catch (e) { toast(e.message, 'bad'); }
 };
 $('#photoClose').onclick = () => { $('#photoModal').classList.remove('open'); if (photoChanged) showProducts(); };
+
+// ---------- pending items ----------
+let pendingStatus = 'pending';
+async function showPending() {
+  const data = await api('/api/pending?status=' + pendingStatus);
+  setPendingBadge(data.pending_count);
+  const list = data.items;
+  const tab = (s, label) => `<button class="${s === pendingStatus ? 'primary' : 'ghost'}" data-status="${s}">${label}</button>`;
+  $('#view').innerHTML = `<div class="bar"><h2>Pending items</h2>${tab('pending', `Waiting (${data.pending_count})`)}${tab('approved', 'Approved')}${tab('dismissed', 'Dismissed')}</div>
+    <p class="muted" style="margin-top:0">Items scanned at the register that weren't in Products. Approve one to add it to Products with your price, or dismiss it.</p>
+    <div class="pgrid">${list.map((p) => `<div class="pcard">
+      ${p.has_image ? `<img src="/api/pending/${p.id}/image?v=${p.image_version}" alt="">` : '<div class="pnone">📷<span>No photo</span></div>'}
+      <div class="pbody">
+        <b>${esc(p.name)}</b>
+        <div>${p.barcode ? `Barcode <b>${esc(p.barcode)}</b>` : '<span class="muted">No barcode</span>'}</div>
+        <div>Charged ${p.price_cents == null ? '—' : money(p.price_cents)}${p.times_seen > 1 ? ` · <span class="pill">scanned ${p.times_seen}×</span>` : ''}</div>
+        ${p.note ? `<div class="muted">Note: ${esc(p.note)}</div>` : ''}
+        <div class="muted" style="font-size:13px">${esc(p.reported_by || '')} · ${new Date(p.updated_at).toLocaleString()}</div>
+        ${p.existing_product && p.status === 'pending' ? `<div class="warn">This barcode is already in Products as <b>${esc(p.existing_product)}</b>. You can dismiss this one.</div>` : ''}
+        ${p.status === 'pending' ? `<div class="pact"><button class="primary" data-approve="${p.id}">Approve & add to Products</button><button class="ghost" data-dismiss="${p.id}">Dismiss</button></div>`
+          : `<div class="muted" style="font-size:13px">${p.status === 'approved' ? 'Approved' : 'Dismissed'}${p.resolved_by_name ? ' by ' + esc(p.resolved_by_name) : ''} · ${new Date(p.resolved_at).toLocaleString()}</div>`}
+      </div></div>`).join('') || `<p class="muted">${pendingStatus === 'pending' ? 'Nothing waiting. 👍' : 'None yet.'}</p>`}</div>`;
+  $('#view').onclick = async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.status) { pendingStatus = t.dataset.status; showPending(); return; }
+    if (t.dataset.dismiss) {
+      if (!confirm('Dismiss this item? It will not be added to Products.')) return;
+      try { await api(`/api/pending/${t.dataset.dismiss}/dismiss`, {}); toast('Dismissed'); showPending(); } catch (err) { toast(err.message, 'bad'); }
+    }
+    if (t.dataset.approve) {
+      const p = list.find((x) => x.id === Number(t.dataset.approve));
+      const values = { name: p.name, barcode: p.barcode || '', price_cents: p.price_cents, taxable: true, active: true, stock_qty: 0,
+        photo: p.has_image ? `/api/pending/${p.id}/image?v=${p.image_version}` : null };
+      if (await saveLoop('Approve: add to Products', PRODUCT_FORM, values,
+        (v) => api(`/api/pending/${p.id}/approve`, v), 'Add to Products')) showPending();
+    }
+  };
+}
+function setPendingBadge(n) {
+  pendingCount = n;
+  const a = $('#nav a[href="#pending"]');
+  if (a) a.innerHTML = 'Pending items' + (n ? ` <span class="badge">${n}</span>` : '');
+}
 
 // ---------- locations & registers ----------
 async function showLocations() {
@@ -396,7 +452,7 @@ async function showSettings() {
   };
 }
 
-const views = { businesses: showBusinesses, products: showProducts, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
+const views = { businesses: showBusinesses, products: showProducts, pending: showPending, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
 function route() {
   const tabs = TABS.filter((t) => t.show());
   let id = location.hash.slice(1);
@@ -404,6 +460,8 @@ function route() {
   $('#nav').innerHTML = (me.business ? '<a href="/checkout">Checkout</a>' : '') +
     tabs.map((t) => `<a href="#${t.id}" class="${t.id === id ? 'active' : ''}">${t.label}</a>`).join('');
   $('#view').onclick = null;
+  setPendingBadge(pendingCount);
+  if (me.business && id !== 'pending') api('/api/pending/count').then((r) => setPendingBadge(r.pending_count)).catch(() => {});
   views[id]().catch((e) => toast(e.message, 'bad'));
 }
 
