@@ -22,6 +22,7 @@ button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--accent); color: #fff; }
 button.danger { background: var(--danger); color: #fff; }
 button.ghost { background: transparent; border: 1px solid var(--line); }
+button.wa { background: #25d366; color: #fff; }
 input, select { padding: 10px 12px; border: 1px solid #cfd4cd; border-radius: 8px; background: #fff; width: 100%; color: var(--ink); }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0 4px; }
