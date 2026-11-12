@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MultiPOS</title></head>
+<body>
+<script src="/app.js"></script>
+<script>
+fetch('/api/me').then((r) => r.ok ? r.json() : null).then((me) => {
+  if (!me) location.href = '/login';
+  else if (me.user.role === 'admin' && !me.business) location.href = '/admin#businesses';
+  else location.href = '/checkout';
+});
+</script>
+</body>
+</html>

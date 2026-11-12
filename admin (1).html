@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiPOS Manage</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bar h2 { margin: 0; flex: 1; }
+  .bar input, .bar select { width: auto; }
+  .banner { background: #fff4d6; padding: 10px 16px; display: flex; gap: 12px; align-items: center; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .stat { background: #fff; border-radius: 10px; padding: 14px; }
+  .stat div { color: var(--muted); font-size: 13px; }
+  .stat b { font-size: 24px; font-variant-numeric: tabular-nums; }
+  .locbox { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .locbox h3 { margin: 0; display: flex; gap: 10px; align-items: center; }
+  .locbox h3 span { flex: 1; }
+  .regs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .reg { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: flex; gap: 8px; align-items: center; }
+  .reg button { padding: 4px 8px; font-size: 13px; }
+  .tablewrap { overflow-x: auto; }
+  td button { padding: 6px 10px; font-size: 14px; }
+  .settings { background: #fff; border-radius: 10px; padding: 18px; max-width: 520px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">MultiPOS</div>
+  <div class="biz" id="bizName"></div>
+  <div class="spacer"></div>
+  <span id="nav"></span>
+  <button class="link" onclick="logout()">Log out</button>
+</div>
+<div class="banner" id="actingBanner" hidden>
+  <span>You are working inside <b id="actingName"></b> as platform administrator.</span>
+  <button onclick="exitBusiness()">Back to all businesses</button>
+</div>
+<main id="view"></main>
+
+<div class="modal-back" id="formModal"><form class="modal" id="form"></form></div>
+
+<script src="/app.js"></script>
+<script>
+let me, role;
+const TABS = [
+  { id: 'businesses', label: 'Businesses', show: () => me.user.role === 'admin' && !me.business },
+  { id: 'products', label: 'Products', show: () => !!me.business },
+  { id: 'locations', label: 'Locations', show: () => !!me.business },
+  { id: 'employees', label: 'Employees', show: () => !!me.business },
+  { id: 'sales', label: 'Sales', show: () => !!me.business },
+  { id: 'settings', label: 'Settings', show: () => true },
+];
+
+// ---------- generic form modal ----------
+// fields: {name, label, type: text|email|password|money|number|check|select|color, options, required, hint}
+function formModal(title, fields, values = {}, submitLabel = 'Save') {
+  return new Promise((resolve) => {
+    const f = $('#form');
+    f.innerHTML = `<h2>${esc(title)}</h2>${fields.map((x) => {
+      const v = values[x.name];
+      if (x.type === 'check') return `<label class="check"><input type="checkbox" name="${x.name}" ${v ? 'checked' : ''}> ${esc(x.label)}</label>`;
+      if (x.type === 'select') return `<label>${esc(x.label)}</label><select name="${x.name}">${x.options.map((o) => `<option value="${esc(o.value)}" ${String(o.value) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+      const val = x.type === 'money' ? (v == null ? '' : (v / 100).toFixed(2)) : (v ?? '');
+      const type = x.type === 'money' ? 'text' : (x.type || 'text');
+      return `<label>${esc(x.label)}</label><input name="${x.name}" type="${type}" value="${esc(val)}" ${x.type === 'money' ? 'inputmode="decimal"' : ''} ${x.required ? 'required' : ''} ${x.type === 'number' ? 'step="any"' : ''}>${x.hint ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(x.hint)}</div>` : ''}`;
+    }).join('')}<div class="err" id="formErr"></div>
+    <div class="actions"><button type="button" class="ghost" id="formCancel">Cancel</button><button class="primary">${esc(submitLabel)}</button></div>`;
+    $('#formModal').classList.add('open');
+    const first = f.querySelector('input:not([type=checkbox]), select'); if (first) first.focus();
+    const close = (out) => { $('#formModal').classList.remove('open'); f.onsubmit = null; resolve(out); };
+    $('#formCancel').onclick = () => close(null);
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const out = {};
+      for (const x of fields) {
+        const el = f.elements[x.name];
+        if (x.type === 'check') out[x.name] = el.checked;
+        else if (x.type === 'money') {
+          const c = toCents(el.value);
+          if (c === null) { $('#formErr').textContent = `${x.label}: enter an amount like 4.99`; return; }
+          out[x.name] = c;
+        } else out[x.name] = el.value;
+      }
+      close(out);
+    };
+  });
+}
+// Runs a save; shows the error and re-opens the form if it fails.
+async function saveLoop(title, fields, values, fn, submitLabel) {
+  for (;;) {
+    const v = await formModal(title, fields, values, submitLabel);
+    if (!v) return false;
+    try { await fn(v); toast('Saved'); return true; }
+    catch (e) { toast(e.message, 'bad'); values = v; }
+  }
+}
+
+// ---------- businesses (platform admin) ----------
+async function showBusinesses() {
+  const list = await api('/api/admin/businesses');
+  $('#view').innerHTML = `<div class="bar"><h2>Businesses</h2><button class="primary" id="addBiz">+ New business</button></div>
+    <div class="tablewrap"><table class="list"><thead><tr><th>Business</th><th>Owner login</th><th class="num">Locations</th><th class="num">Users</th><th>Status</th><th></th></tr></thead><tbody>
+    ${list.map((b) => `<tr class="${b.active ? '' : 'off'}"><td><b>${esc(b.name)}</b></td><td>${esc(b.owner_email || '')}</td><td class="num">${b.location_count}</td><td class="num">${b.user_count}</td>
+      <td>${b.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
+      <td style="white-space:nowrap"><button class="primary" data-enter="${b.id}">Open</button> <button data-toggle="${b.id}" data-active="${b.active}">${b.active ? 'Turn off' : 'Turn on'}</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">No businesses yet. Create the first one.</td></tr>'}
+    </tbody></table></div>`;
+  $('#addBiz').onclick = async () => {
+    if (await saveLoop('New business', [
+      { name: 'name', label: 'Business name', required: true },
+      { name: 'location_name', label: 'First location name', required: true },
+      { name: 'tax_rate', label: 'Sales tax rate (%)', type: 'number', required: true },
+      { name: 'owner_name', label: 'Owner name', required: true },
+      { name: 'owner_email', label: 'Owner login email', type: 'email', required: true },
+      { name: 'owner_password', label: 'Owner password (8+ characters)', type: 'password', required: true },
+    ], { location_name: 'Main Location', tax_rate: 8.25 }, (v) => api('/api/admin/businesses', v), 'Create business')) showBusinesses();
+  };
+  $('#view').onclick = async (e) => {
+    const en = e.target.closest('[data-enter]'), tg = e.target.closest('[data-toggle]');
+    if (en) { await api('/api/admin/enter/' + en.dataset.enter, {}); location.hash = 'products'; location.reload(); }
+    if (tg) {
+      const turnOn = tg.dataset.active !== 'true';
+      if (!turnOn && !confirm('Turn off this business? Its employees will not be able to log in.')) return;
+      await api('/api/admin/businesses/' + tg.dataset.toggle, { active: turnOn }, 'PUT'); showBusinesses();
+    }
+  };
+}
+async function exitBusiness() { await api('/api/admin/exit', {}); location.hash = 'businesses'; location.reload(); }
+
+// ---------- products ----------
+let productQuery = '';
+async function showProducts() {
+  const canEdit = role !== 'cashier';
+  const list = await api('/api/products?all=1&q=' + encodeURIComponent(productQuery));
+  $('#view').innerHTML = `<div class="bar"><h2>Products</h2><input id="pq" placeholder="Search name, barcode, category" value="${esc(productQuery)}">
+    ${canEdit ? '<button class="primary" id="addProd">+ Add product</button>' : ''}</div>
+    <div class="tablewrap"><table class="list"><thead><tr><th>Product</th><th>Barcode</th><th>Category</th><th class="num">Price</th><th>Tax</th><th class="num">Stock</th><th></th></tr></thead><tbody>
+    ${list.map((p) => `<tr class="${p.active ? '' : 'off'}"><td><b>${esc(p.name)}</b>${p.active ? '' : ' <span class="pill off">Hidden</span>'}</td><td>${esc(p.barcode || '')}</td><td>${esc(p.category || '')}</td>
+      <td class="num">${money(p.price_cents)}</td><td>${p.taxable ? 'Yes' : 'No'}</td><td class="num">${p.track_stock ? p.stock_qty : '—'}</td>
+      <td>${canEdit ? `<button data-edit="${p.id}">Edit</button>` : ''}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="muted">No products found.</td></tr>'}</tbody></table></div>`;
+  let t; $('#pq').oninput = () => { clearTimeout(t); t = setTimeout(() => { productQuery = $('#pq').value; showProducts().then(() => { const q = $('#pq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
+  const fields = [
+    { name: 'name', label: 'Product name', required: true },
+    { name: 'barcode', label: 'Barcode (UPC / EAN / QR text)', hint: 'Leave blank for items without a barcode. A USB scanner can type it here.' },
+    { name: 'category', label: 'Category', hint: 'Shown as a tab on the checkout screen, e.g. Drinks' },
+    { name: 'price_cents', label: 'Price', type: 'money', required: true },
+    { name: 'taxable', label: 'Taxable', type: 'check' },
+    { name: 'track_stock', label: 'Track stock for this product', type: 'check' },
+    { name: 'stock_qty', label: 'Quantity in stock', type: 'number' },
+    { name: 'active', label: 'Show at checkout', type: 'check' },
+  ];
+  if (canEdit) $('#addProd').onclick = async () => {
+    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0 }, (v) => api('/api/products', v))) showProducts();
+  };
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('[data-edit]'); if (!b) return;
+    const p = list.find((x) => x.id === Number(b.dataset.edit));
+    if (await saveLoop('Edit product', fields, p, (v) => api('/api/products/' + p.id, v, 'PUT'))) showProducts();
+  };
+}
+
+// ---------- locations & registers ----------
+async function showLocations() {
+  const [locs, regs] = await Promise.all([api('/api/locations'), api('/api/registers')]);
+  const isOwner = role === 'owner';
+  $('#view').innerHTML = `<div class="bar"><h2>Locations & registers</h2>${isOwner ? '<button class="primary" id="addLoc">+ Add location</button>' : ''}</div>
+    ${locs.map((l) => `<div class="locbox"><h3><span>${esc(l.name)} ${l.active ? '' : '<span class="pill off">Off</span>'}</span>${isOwner ? `<button data-editloc="${l.id}">Edit</button>` : ''}</h3>
+      <div class="muted">${esc(l.address || 'No address')} · Sales tax ${Number(l.tax_rate)}%</div>
+      <div class="regs">${regs.filter((r) => r.location_id === l.id).map((r) => `<div class="reg">${esc(r.name)} ${r.active ? '' : '<span class="pill off">Off</span>'}<button data-editreg="${r.id}">Edit</button></div>`).join('')}
+        <button data-addreg="${l.id}">+ Register</button></div></div>`).join('') || '<p class="muted">No locations yet.</p>'}`;
+  const locFields = [
+    { name: 'name', label: 'Location name', required: true },
+    { name: 'address', label: 'Address (printed on receipts)' },
+    { name: 'phone', label: 'Phone (printed on receipts)' },
+    { name: 'tax_rate', label: 'Sales tax rate (%)', type: 'number', required: true },
+    { name: 'active', label: 'Location is open for sales', type: 'check' },
+  ];
+  if (isOwner) $('#addLoc').onclick = async () => {
+    if (await saveLoop('Add location', locFields, { tax_rate: 8.25, active: true }, (v) => api('/api/locations', { ...v, active: true }))) showLocations();
+  };
+  $('#view').onclick = async (e) => {
+    const t = e.target;
+    if (t.dataset.editloc) {
+      const l = locs.find((x) => x.id === Number(t.dataset.editloc));
+      if (await saveLoop('Edit location', locFields, { ...l, tax_rate: Number(l.tax_rate) }, (v) => api('/api/locations/' + l.id, v, 'PUT'))) showLocations();
+    }
+    if (t.dataset.addreg) {
+      if (await saveLoop('Add register', [{ name: 'name', label: 'Register name', required: true }], { name: 'Register ' + (regs.filter((r) => r.location_id === Number(t.dataset.addreg)).length + 1) },
+        (v) => api('/api/registers', { ...v, location_id: Number(t.dataset.addreg) }))) showLocations();
+    }
+    if (t.dataset.editreg) {
+      const r = regs.find((x) => x.id === Number(t.dataset.editreg));
+      if (await saveLoop('Edit register', [{ name: 'name', label: 'Register name', required: true }, { name: 'active', label: 'Register in use', type: 'check' }], r,
+        (v) => api('/api/registers/' + r.id, v, 'PUT'))) showLocations();
+    }
+  };
+}
+
+// ---------- employees ----------
+async function showEmployees() {
+  const list = await api('/api/users');
+  const roles = role === 'owner' ? ['owner', 'manager', 'cashier'] : ['cashier'];
+  const roleOpts = roles.map((r) => ({ value: r, label: r[0].toUpperCase() + r.slice(1) }));
+  $('#view').innerHTML = `<div class="bar"><h2>Employees</h2><button class="primary" id="addUser">+ Add employee</button></div>
+    <p class="muted" style="margin-top:0">Owners manage everything. Managers handle products, registers, cashiers and sales reports. Cashiers only use checkout.</p>
+    <div class="tablewrap"><table class="list"><thead><tr><th>Name</th><th>Login email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+    ${list.map((u) => `<tr class="${u.active ? '' : 'off'}"><td><b>${esc(u.name)}</b></td><td>${esc(u.email)}</td><td>${esc(u.role)}</td><td>${u.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
+      <td>${roles.includes(u.role) ? `<button data-edit="${u.id}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+  $('#addUser').onclick = async () => {
+    if (await saveLoop('Add employee', [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'email', label: 'Login email', type: 'email', required: true },
+      { name: 'role', label: 'Role', type: 'select', options: roleOpts },
+      { name: 'password', label: 'Password (8+ characters)', type: 'password', required: true },
+    ], { role: 'cashier' }, (v) => api('/api/users', v))) showEmployees();
+  };
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('[data-edit]'); if (!b) return;
+    const u = list.find((x) => x.id === Number(b.dataset.edit));
+    if (await saveLoop('Edit ' + u.name, [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'role', label: 'Role', type: 'select', options: roleOpts },
+      { name: 'password', label: 'New password', type: 'password', hint: 'Leave blank to keep the current password' },
+      { name: 'active', label: 'Can log in', type: 'check' },
+    ], { ...u, password: '' }, (v) => api('/api/users/' + u.id, v, 'PUT'))) showEmployees();
+  };
+}
+
+// ---------- sales ----------
+const today = () => new Date().toLocaleDateString('en-CA');
+let salesFilter = null;
+async function showSales() {
+  const locs = await api('/api/locations');
+  salesFilter = salesFilter || { from: today(), to: today(), location_id: '' };
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const q = new URLSearchParams({ ...salesFilter, tz });
+  const data = await api('/api/sales?' + q);
+  const sum = (k) => data.summary.reduce((a, r) => a + r[k], 0);
+  const by = (m) => data.summary.find((r) => r.payment_method === m) || { total: 0, n: 0 };
+  $('#view').innerHTML = `<div class="bar"><h2>Sales</h2>
+      <input type="date" id="sFrom" value="${salesFilter.from}"> to <input type="date" id="sTo" value="${salesFilter.to}">
+      <select id="sLoc"><option value="">All locations</option>${locs.map((l) => `<option value="${l.id}" ${String(l.id) === salesFilter.location_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="cards">
+      <div class="stat"><div>Total sales</div><b>${money(sum('total'))}</b></div>
+      <div class="stat"><div>Number of sales</div><b>${sum('n')}</b></div>
+      <div class="stat"><div>Sales tax collected</div><b>${money(sum('tax'))}</b></div>
+      <div class="stat"><div>Cash (${by('cash').n})</div><b>${money(by('cash').total)}</b></div>
+      <div class="stat"><div>Card (${by('card').n})</div><b>${money(by('card').total)}</b></div>
+      <div class="stat"><div>Other (${by('other').n})</div><b>${money(by('other').total)}</b></div>
+    </div>
+    <div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Time</th><th>Location</th><th>Cashier</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
+    ${data.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.location_name)} · ${esc(s.register_name || '')}</td>
+      <td>${esc(s.cashier || '')}</td><td>${esc(s.payment_method)}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
+      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="muted">No sales in this period.</td></tr>'}</tbody></table></div>`;
+  const refresh = () => { salesFilter = { from: $('#sFrom').value, to: $('#sTo').value, location_id: $('#sLoc').value }; showSales(); };
+  $('#sFrom').onchange = refresh; $('#sTo').onchange = refresh; $('#sLoc').onchange = refresh;
+  $('#view').onclick = async (e) => {
+    const t = e.target;
+    if (t.dataset.receipt) window.open('/receipt?id=' + t.dataset.receipt, '_blank', 'width=420,height=700');
+    if (t.dataset.void && confirm(`Void sale #${t.dataset.void}? It will be removed from the totals and tracked stock is put back.`)) {
+      try { await api(`/api/sales/${t.dataset.void}/void`, {}); toast('Sale voided'); showSales(); } catch (err) { toast(err.message, 'bad'); }
+    }
+  };
+}
+
+// ---------- settings ----------
+async function showSettings() {
+  const isOwner = role === 'owner' && me.business;
+  $('#view').innerHTML = `${isOwner ? `<div class="settings"><h2 style="margin-top:0">Business</h2>
+      <label>Business name</label><input id="bName" value="${esc(me.business.name)}">
+      <label>Accent color</label><input id="bColor" type="color" value="${esc(me.business.accent_color)}" style="height:44px;padding:4px">
+      <label>Logo image URL (https://…)</label><input id="bLogo" value="${esc(me.business.logo_url || '')}" placeholder="Optional">
+      <button class="primary" style="margin-top:14px" id="saveBiz">Save business</button></div>` : ''}
+    <div class="settings"><h2 style="margin-top:0">My password</h2>
+      <label>Current password</label><input id="pCur" type="password" autocomplete="current-password">
+      <label>New password (8+ characters)</label><input id="pNew" type="password" autocomplete="new-password">
+      <button class="primary" style="margin-top:14px" id="savePw">Change password</button></div>`;
+  if (isOwner) $('#saveBiz').onclick = async () => {
+    try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+  $('#savePw').onclick = async () => {
+    try { await api('/api/me/password', { current: $('#pCur').value, password: $('#pNew').value }); toast('Password changed'); $('#pCur').value = $('#pNew').value = ''; }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
+const views = { businesses: showBusinesses, products: showProducts, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
+function route() {
+  const tabs = TABS.filter((t) => t.show());
+  let id = location.hash.slice(1);
+  if (!tabs.some((t) => t.id === id)) id = tabs[0].id;
+  $('#nav').innerHTML = (me.business ? '<a href="/checkout">Checkout</a>' : '') +
+    tabs.map((t) => `<a href="#${t.id}" class="${t.id === id ? 'active' : ''}">${t.label}</a>`).join('');
+  $('#view').onclick = null;
+  views[id]().catch((e) => toast(e.message, 'bad'));
+}
+
+(async () => {
+  me = await api('/api/me');
+  role = me.user.role === 'admin' ? 'owner' : me.user.role;
+  if (me.user.role === 'cashier') { location.href = '/checkout'; return; }
+  if (me.business) { applyBrand(me.business); $('#bizName').textContent = me.business.name; }
+  if (me.user.role === 'admin' && me.business) { $('#actingBanner').hidden = false; $('#actingName').textContent = me.business.name; }
+  window.addEventListener('hashchange', route);
+  route();
+})().catch((e) => toast(e.message, 'bad'));
+</script>
+</body>
+</html>

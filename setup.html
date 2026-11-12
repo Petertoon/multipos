@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiPOS Setup</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<form class="auth" id="f">
+  <h1>First-time setup</h1>
+  <div class="muted">Create the platform administrator account. This page only works once.</div>
+  <label for="name">Your name</label>
+  <input id="name" required>
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="username" required>
+  <label for="pw">Password (8+ characters)</label>
+  <input id="pw" type="password" autocomplete="new-password" minlength="8" required>
+  <button class="primary" type="submit">Create administrator</button>
+  <div class="err" id="err"></div>
+</form>
+<script src="/app.js"></script>
+<script>
+api('/api/setup-status').then((s) => { if (!s.needs_setup) location.href = '/login'; });
+$('#f').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('#err').textContent = '';
+  try {
+    await api('/api/setup', { name: $('#name').value, email: $('#email').value, password: $('#pw').value });
+    location.href = '/admin#businesses';
+  } catch (err) { $('#err').textContent = err.message; }
+});
+</script>
+</body>
+</html>

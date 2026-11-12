@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17201b">
+<title>MultiPOS Scanner</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding-bottom: 40px; }
+  .head { background: var(--top); color: #fff; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); }
+  .head b { font-size: 18px; display: block; }
+  .head span { color: #b9cbbf; font-size: 14px; }
+  main { padding: 14px; max-width: 520px; margin: 0 auto; }
+  #reader { width: 100%; background: #000; border-radius: 12px; overflow: hidden; }
+  #reader:empty { display: none; }
+  #reader video { border-radius: 12px; }
+  .bigbtn { width: 100%; padding: 16px; font-size: 18px; margin-top: 10px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .row2 button { padding: 14px 8px; }
+  .result { margin-top: 12px; padding: 14px; border-radius: 12px; background: #fff; display: none; }
+  .result.ok { display: block; border-left: 6px solid var(--accent); }
+  .result.bad { display: block; border-left: 6px solid var(--danger); }
+  .result b { font-size: 18px; }
+  .panel { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; }
+  .panel h3 { margin: 0 0 8px; font-size: 16px; display: flex; justify-content: space-between; }
+  .item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); gap: 8px; }
+  .item:last-child { border-bottom: 0; }
+  .item .x { background: transparent; color: var(--danger); padding: 6px 10px; font-size: 18px; }
+  .tot { display: flex; justify-content: space-between; font-size: 22px; font-weight: 800; margin-top: 10px; }
+  .fatal { text-align: center; padding: 40px 20px; }
+  form.inline { display: none; }
+  form.inline.open { display: block; }
+  form.inline button { width: 100%; margin-top: 12px; padding: 14px; }
+</style>
+</head>
+<body>
+<div class="head"><b id="bizName">MultiPOS Scanner</b><span id="regName">Connecting…</span></div>
+<main id="main">
+  <div id="reader"></div>
+  <button class="primary bigbtn" id="camBtn">Start camera</button>
+  <div class="row2">
+    <button onclick="toggleForm('typeForm')">Type barcode</button>
+    <button onclick="toggleForm('customForm')">Custom amount</button>
+  </div>
+
+  <form class="inline panel" id="typeForm">
+    <label for="code">Barcode number</label>
+    <input id="code" inputmode="numeric" autocomplete="off">
+    <button class="primary">Add to sale</button>
+  </form>
+
+  <form class="inline panel" id="customForm">
+    <label for="cName">Description</label>
+    <input id="cName" placeholder="Custom item" maxlength="120">
+    <label for="cPrice">Price</label>
+    <input id="cPrice" inputmode="decimal" placeholder="0.00">
+    <label for="cQty">Quantity</label>
+    <input id="cQty" type="number" inputmode="numeric" min="1" max="999" value="1">
+    <label class="check"><input type="checkbox" id="cTax" checked> Taxable</label>
+    <button class="primary">Add to sale</button>
+  </form>
+
+  <div class="result" id="result"></div>
+
+  <div class="panel">
+    <h3><span>Current sale</span><span class="muted" id="count"></span></h3>
+    <div id="items" class="muted">No items yet.</div>
+    <div class="tot"><span>Total</span><span id="total">$0.00</span></div>
+  </div>
+</main>
+
+<script src="/vendor/html5-qrcode.min.js"></script>
+<script src="/app.js"></script>
+<script>
+const pairToken = location.hash.slice(1);
+let scanner = null, busy = false, lastCode = '', lastTime = 0, audio;
+
+function beep(ok = true) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = ok ? 1100 : 300; g.gain.value = 0.15;
+    o.connect(g); g.connect(audio.destination); o.start(); o.stop(audio.currentTime + (ok ? 0.12 : 0.3));
+  } catch (e) { /* no sound */ }
+  if (navigator.vibrate) navigator.vibrate(ok ? 60 : [80, 60, 80]);
+}
+
+function render(data) {
+  const cart = data.cart || [], t = data.totals || {};
+  $('#count').textContent = t.item_count ? `${t.item_count} item${t.item_count === 1 ? '' : 's'}` : '';
+  $('#total').textContent = money(t.total_cents || 0);
+  $('#items').innerHTML = cart.length ? cart.slice().reverse().map((it) => `
+    <div class="item" data-key="${it.key}"><div><b>${esc(it.name)}</b><div class="muted">${it.qty} × ${money(it.unit_cents)}</div></div>
+    <div style="display:flex;align-items:center;gap:6px"><b class="money">${money(it.qty * it.unit_cents)}</b><button class="x" title="Remove">✕</button></div></div>`).join('')
+    : '<div class="muted">No items yet.</div>';
+}
+function showResult(kind, html) { const r = $('#result'); r.className = 'result ' + kind; r.innerHTML = html; }
+
+async function load() {
+  if (!pairToken) throw new Error('Open this page by scanning the QR code on the register.');
+  const d = await api('/api/pair/' + encodeURIComponent(pairToken));
+  applyBrand(d);
+  $('#bizName').textContent = d.business_name;
+  $('#regName').textContent = `${d.location_name} · ${d.register_name}`;
+  render(d);
+}
+
+async function sendCode(code) {
+  code = code.trim(); if (!code || busy) return;
+  const now = Date.now();
+  if (code === lastCode && now - lastTime < 2500) return; // same item still in view
+  lastCode = code; lastTime = now; busy = true;
+  try {
+    const r = await api(`/api/pair/${encodeURIComponent(pairToken)}/scan`, { code });
+    render(r);
+    if (r.found) { beep(true); showResult('ok', `Added <b>${esc(r.item.name)}</b> · ${money(r.item.unit_cents)}<div class="muted">Qty in sale: ${r.item.qty}</div>`); }
+    else {
+      beep(false);
+      showResult('bad', `<b>Not found</b><div class="muted">No product with barcode ${esc(code)}.</div>
+        <button class="primary" style="margin-top:10px;width:100%" data-code="${esc(code)}" onclick="customFor(this.dataset.code)">Enter a price for it</button>`);
+    }
+  } catch (e) { beep(false); showResult('bad', esc(e.message)); }
+  finally { busy = false; }
+}
+function customFor(code) {
+  toggleForm('customForm', true);
+  $('#cName').value = 'Item ' + code; $('#cPrice').value = ''; $('#cPrice').focus();
+}
+
+function toggleForm(id, forceOpen) {
+  const f = $('#' + id), open = forceOpen || !f.classList.contains('open');
+  $$('form.inline').forEach((x) => x.classList.remove('open'));
+  if (open) { f.classList.add('open'); f.querySelector('input').focus(); }
+}
+$('#typeForm').addEventListener('submit', (e) => {
+  e.preventDefault(); lastCode = ''; sendCode($('#code').value); $('#code').value = '';
+});
+$('#customForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const price = toCents($('#cPrice').value);
+  if (price === null) { showResult('bad', 'Enter a valid price, like 5.00'); return; }
+  try {
+    const r = await api(`/api/pair/${encodeURIComponent(pairToken)}/custom`,
+      { name: $('#cName').value, price_cents: price, qty: $('#cQty').value, taxable: $('#cTax').checked });
+    render(r); beep(true);
+    showResult('ok', `Added <b>${esc(r.item.name)}</b> · ${r.item.qty} × ${money(r.item.unit_cents)}`);
+    $('#customForm').reset(); $('#cQty').value = 1; $('#cTax').checked = true;
+    $('#customForm').classList.remove('open');
+  } catch (err) { showResult('bad', esc(err.message)); }
+});
+$('#items').addEventListener('click', async (e) => {
+  const b = e.target.closest('.x'); if (!b) return;
+  try { render(await api(`/api/pair/${encodeURIComponent(pairToken)}/remove`, { key: b.closest('.item').dataset.key })); }
+  catch (err) { showResult('bad', esc(err.message)); }
+});
+
+$('#camBtn').addEventListener('click', async () => {
+  if (scanner) { await scanner.stop().catch(() => {}); scanner = null; $('#camBtn').textContent = 'Start camera'; return; }
+  try {
+    const F = Html5QrcodeSupportedFormats;
+    scanner = new Html5Qrcode('reader', { formatsToSupport: [F.UPC_A, F.UPC_E, F.EAN_13, F.EAN_8, F.CODE_128, F.CODE_39, F.QR_CODE], verbose: false });
+    await scanner.start({ facingMode: 'environment' },
+      { fps: 10, qrbox: (w, h) => ({ width: Math.floor(w * 0.85), height: Math.floor(Math.min(h, w) * 0.5) }),
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
+      (text) => sendCode(text), () => {});
+    $('#camBtn').textContent = 'Stop camera';
+  } catch (e) {
+    scanner = null;
+    showResult('bad', 'Camera did not start. Allow camera access for this site, or use "Type barcode".');
+  }
+});
+
+// Keep the list in step with changes made at the register.
+setInterval(() => { if (!busy && pairToken && !document.hidden) api('/api/pair/' + encodeURIComponent(pairToken)).then(render).catch(() => {}); }, 4000);
+
+load().catch((e) => {
+  $('#main').innerHTML = `<div class="fatal"><h2>Scanner not connected</h2><p class="muted">${esc(e.message)}</p></div>`;
+  $('#regName').textContent = '';
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+:root {
+  --accent: #1f8f4e;
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #1d221f;
+  --muted: #6b726d;
+  --line: #e2e5e0;
+  --top: #17201b;
+  --danger: #c0392b;
+  --card: #2563c9;
+  --radius: 10px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-size: 16px; -webkit-text-size-adjust: 100%; }
+a { color: var(--accent); }
+button, input, select { font: inherit; }
+button { cursor: pointer; border: 0; border-radius: 8px; padding: 10px 16px; background: #e8ebe6; color: var(--ink); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: #fff; }
+button.danger { background: var(--danger); color: #fff; }
+button.ghost { background: transparent; border: 1px solid var(--line); }
+input, select { padding: 10px 12px; border: 1px solid #cfd4cd; border-radius: 8px; background: #fff; width: 100%; color: var(--ink); }
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0 4px; }
+label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+label.check input { width: auto; }
+.muted { color: var(--muted); }
+.money { font-variant-numeric: tabular-nums; }
+
+/* top bar */
+.topbar { background: var(--top); color: #fff; display: flex; align-items: center; gap: 16px; padding: 10px 16px; flex-wrap: wrap; }
+.topbar .brand { font-weight: 800; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.topbar .brand img { height: 32px; border-radius: 6px; background: #fff; }
+.topbar .biz { font-weight: 700; color: #cfe9d9; }
+.topbar .spacer { flex: 1; }
+.topbar a, .topbar button.link { color: #fff; text-decoration: none; background: transparent; padding: 8px 10px; font-weight: 600; border-radius: 6px; }
+.topbar a.active, .topbar a:hover, .topbar button.link:hover { background: rgba(255,255,255,.12); }
+.topbar select { width: auto; background: #253029; color: #fff; border-color: #3a463e; }
+
+/* auth pages */
+.auth { max-width: 380px; margin: 10vh auto; background: var(--panel); padding: 28px; border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,.06); }
+.auth h1 { margin: 0 0 6px; font-size: 26px; }
+.auth button { width: 100%; margin-top: 18px; padding: 12px; }
+.err { color: var(--danger); min-height: 22px; margin-top: 10px; font-size: 14px; }
+
+/* toast */
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: #222; color: #fff; padding: 12px 18px; border-radius: 10px; opacity: 0; transition: .2s; pointer-events: none; z-index: 100; max-width: 90vw; text-align: center; font-weight: 600; }
+#toast.show { opacity: 1; transform: translateX(-50%); }
+#toast.bad { background: var(--danger); }
+
+/* modal */
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.modal-back.open { display: flex; }
+.modal { background: var(--panel); border-radius: 14px; padding: 22px; width: 100%; max-width: 440px; max-height: 92vh; overflow: auto; }
+.modal h2 { margin: 0 0 6px; }
+.modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+
+/* tables */
+table.list { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: var(--radius); overflow: hidden; }
+table.list th, table.list td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+table.list th { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; background: #fafbf9; }
+table.list td.num, table.list th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.list tr.off td { color: #aaa; }
+.pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #eef1ec; font-weight: 700; }
+.pill.off { background: #f5e1df; color: var(--danger); }

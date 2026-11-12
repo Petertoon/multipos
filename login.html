@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiPOS Login</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<form class="auth" id="f">
+  <h1>MultiPOS</h1>
+  <div class="muted">Sign in to your business</div>
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="username" required>
+  <label for="pw">Password</label>
+  <input id="pw" type="password" autocomplete="current-password" required>
+  <button class="primary" type="submit">Sign in</button>
+  <div class="err" id="err"></div>
+</form>
+<script src="/app.js"></script>
+<script>
+api('/api/setup-status').then((s) => { if (s.needs_setup) location.href = '/setup'; });
+$('#f').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('#err').textContent = '';
+  try {
+    const r = await api('/api/login', { email: $('#email').value, password: $('#pw').value });
+    location.href = r.role === 'admin' ? '/admin#businesses' : '/checkout';
+  } catch (err) { $('#err').textContent = err.message; }
+});
+</script>
+</body>
+</html>
