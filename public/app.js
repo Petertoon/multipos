@@ -102,6 +102,45 @@ function waNumber(phone) {
   return d;
 }
 
+// How this computer sends WhatsApp messages (saved per device):
+//   'app' = the installed WhatsApp Desktop app
+//   'web' = WhatsApp Web, always reusing ONE browser tab so it stays logged in
+const WA_TAB = 'multipos_whatsapp';
+function waMode() { try { return localStorage.getItem('mp_wa_mode') || 'app'; } catch (e) { return 'app'; } }
+function setWaMode(m) { try { localStorage.setItem('mp_wa_mode', m); } catch (e) { /* ok */ } }
+function openWhatsApp() {
+  if (waMode() === 'app') { launchLink('whatsapp://'); return; }
+  window.open('https://web.whatsapp.com/', WA_TAB);
+}
+function sendToWhatsApp(num, text) {
+  const q = (num ? `phone=${num}&` : '') + `text=${encodeURIComponent(text)}`;
+  if (waMode() === 'app') launchLink(`whatsapp://send?${q}`);
+  else window.open(`https://web.whatsapp.com/send?${q}`, WA_TAB);
+}
+// Opens an app link (whatsapp://) without leaving the POS page.
+function launchLink(href) { const a = document.createElement('a'); a.href = href; document.body.appendChild(a); a.click(); a.remove(); }
+
+// Small "WhatsApp" box: choose the app or WhatsApp Web, and open it.
+function mountWhatsAppBox(el) {
+  el.innerHTML = `<div class="wabox">
+    <div class="wahead"><span class="walogo">🟢</span><b>WhatsApp receipts</b></div>
+    <label class="check"><input type="radio" name="waMode" value="app"> WhatsApp Desktop app</label>
+    <label class="check"><input type="radio" name="waMode" value="web"> WhatsApp Web (one tab)</label>
+    <button class="wa" type="button" data-open>Open WhatsApp</button>
+    <div class="muted wanote"></div></div>`;
+  const note = el.querySelector('.wanote');
+  const sync = () => {
+    const m = waMode();
+    el.querySelectorAll('input[name=waMode]').forEach((r) => { r.checked = r.value === m; });
+    note.textContent = m === 'app'
+      ? 'Receipts open in the WhatsApp app on this computer. It must be installed and signed in.'
+      : 'Receipts open in one WhatsApp Web tab that stays signed in. Sign in once with the QR code.';
+  };
+  el.querySelectorAll('input[name=waMode]').forEach((r) => r.addEventListener('change', () => { setWaMode(r.value); sync(); }));
+  el.querySelector('[data-open]').addEventListener('click', openWhatsApp);
+  sync();
+}
+
 // Opens a small dialog: enter the customer's number, then WhatsApp opens with the receipt ready to send.
 async function openWhatsAppDialog(saleId) {
   let back = $('#waModal');
@@ -114,6 +153,7 @@ async function openWhatsAppDialog(saleId) {
       <label for="waPhone">Customer's WhatsApp number</label>
       <input id="waPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="(512) 555-1234">
       <div class="muted" style="font-size:13px;margin-top:4px">US numbers need no country code. Other countries: start with the country code. Leave blank to pick a contact in WhatsApp.</div>
+      <div class="muted" id="waVia" style="font-size:13px;margin-top:10px"></div>
       <div class="err" id="waErr"></div>
       <div class="actions"><button type="button" class="ghost" id="waCancel">Cancel</button><button class="primary" id="waSend" disabled>Open WhatsApp</button></div>
     </form>`;
@@ -121,6 +161,9 @@ async function openWhatsAppDialog(saleId) {
     $('#waCancel').onclick = () => back.classList.remove('open');
   }
   const form = $('#waForm');
+  $('#waVia').textContent = waMode() === 'app'
+    ? 'Opens in the WhatsApp Desktop app. (Change this on the checkout screen, in the WhatsApp box.)'
+    : 'Opens in your WhatsApp Web tab. (Change this on the checkout screen, in the WhatsApp box.)';
   $('#waPhone').value = ''; $('#waErr').textContent = ''; $('#waInfo').textContent = 'Loading…'; $('#waSend').disabled = true;
   back.classList.add('open'); $('#waPhone').focus();
   let text;
@@ -136,7 +179,7 @@ async function openWhatsAppDialog(saleId) {
     const raw = $('#waPhone').value.trim();
     const num = waNumber(raw);
     if (raw && (num.length < 8 || num.length > 15)) { $('#waErr').textContent = 'That phone number does not look right'; return; }
-    window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+    sendToWhatsApp(num, text);
     back.classList.remove('open');
     if (typeof focusScan === 'function') focusScan();
   };
