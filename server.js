@@ -10,7 +10,10 @@ const { pool, init } = require('./db');
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '200kb' }));
+// Photo uploads need a bigger body limit than everything else.
+const jsonSmall = express.json({ limit: '200kb' });
+const jsonLarge = express.json({ limit: '4mb' });
+app.use((req, res, next) => (req.path.endsWith('/image') ? jsonLarge : jsonSmall)(req, res, next));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 // Camera barcode reader for the phone page, served from this app (no outside CDN needed).
@@ -365,18 +368,22 @@ async function mutateCart(registerId, businessId, fn, source) {
     return { cart, totals, ...result };
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }
+// Product columns without the photo bytes (never load photos in lists).
+const PRODUCT_COLS = `id, business_id, barcode, name, category, price_cents, taxable, track_stock, stock_qty,
+  active, created_at, (image IS NOT NULL) AS has_image,
+  CASE WHEN image IS NOT NULL THEN floor(extract(epoch FROM image_updated_at))::bigint END AS image_version`;
 function addProductToCart(cart, p, qty = 1) {
   const existing = cart.find((it) => it.product_id === p.id);
-  if (existing) existing.qty += qty;
+  if (existing) { existing.qty += qty; existing.img = p.image_version ? Number(p.image_version) : null; }
   else cart.push({ key: token(6), product_id: p.id, barcode: p.barcode, name: p.name,
-    unit_cents: p.price_cents, qty, taxable: p.taxable });
+    unit_cents: p.price_cents, qty, taxable: p.taxable, img: p.image_version ? Number(p.image_version) : null });
   return existing || cart[cart.length - 1];
 }
 async function scanIntoCart(registerId, businessId, code, source) {
   code = text(code, 'Code', { max: 100 });
   return mutateCart(registerId, businessId, async (cart, client) => {
     const { rows } = await client.query(
-      `SELECT * FROM products WHERE business_id = $1 AND active AND barcode = ANY($2) LIMIT 1`,
+      `SELECT ${PRODUCT_COLS} FROM products WHERE business_id = $1 AND active AND barcode = ANY($2) LIMIT 1`,
       [businessId, barcodeVariants(code)]);
     if (!rows[0]) return { found: false, code, event: { kind: 'not-found', code } };
     const item = addProductToCart(cart, rows[0]);
@@ -406,7 +413,7 @@ app.post('/api/registers/:id/cart/scan', ...biz, wrap(async (req, res) => {
 }));
 app.post('/api/registers/:id/cart/product', ...biz, wrap(async (req, res) => {
   res.json(await mutateCart(req.params.id, req.user.business_id, async (cart, client) => {
-    const { rows } = await client.query('SELECT * FROM products WHERE id=$1 AND business_id=$2 AND active',
+    const { rows } = await client.query(`SELECT ${PRODUCT_COLS} FROM products WHERE id=$1 AND business_id=$2 AND active`,
       [req.body.product_id, req.user.business_id]);
     if (!rows[0]) fail(404, 'Product not found');
     addProductToCart(cart, rows[0]);
@@ -522,8 +529,46 @@ app.get('/api/products', ...biz, wrap(async (req, res) => {
   if (req.query.all !== '1') where += ' AND active';
   if (q) { params.push(`%${q}%`); where += ` AND (name ILIKE $2 OR barcode ILIKE $2 OR category ILIKE $2)`; }
   const { rows } = await pool.query(
-    `SELECT * FROM products WHERE ${where} ORDER BY category NULLS LAST, name LIMIT 1000`, params);
+    `SELECT ${PRODUCT_COLS} FROM products WHERE ${where} ORDER BY category NULLS LAST, name LIMIT 1000`, params);
   res.json(rows);
+}));
+
+// ---------- product photos ----------
+async function sendProductImage(res, productId, businessId) {
+  const { rows } = await pool.query(
+    'SELECT image, image_type FROM products WHERE id = $1 AND business_id = $2 AND image IS NOT NULL',
+    [productId, businessId]);
+  if (!rows[0]) return res.status(404).end();
+  // URLs carry ?v=<version>, so a new photo gets a new URL and the old one can be cached.
+  res.set({ 'Content-Type': rows[0].image_type, 'Cache-Control': 'private, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff' });
+  res.send(rows[0].image);
+}
+app.get('/api/products/:id/image', ...biz, wrap(async (req, res) => {
+  await sendProductImage(res, req.params.id, req.user.business_id);
+}));
+app.get('/api/pair/:token/products/:id/image', wrap(async (req, res) => {
+  const r = await registerByPair(req.params.token);
+  await sendProductImage(res, req.params.id, r.business_id);
+}));
+// Body: { data_url: "data:image/jpeg;base64,..." } — the browser shrinks the photo first.
+app.put('/api/products/:id/image', ...managers, wrap(async (req, res) => {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(req.body.data_url || ''));
+  if (!m) fail(400, 'Photo must be a JPEG, PNG or WebP image');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (bytes.length > 1.5 * 1024 * 1024) fail(400, 'Photo is too large (1.5 MB max)');
+  const r = await pool.query(
+    'UPDATE products SET image=$1, image_type=$2, image_updated_at=now() WHERE id=$3 AND business_id=$4',
+    [bytes, m[1], req.params.id, req.user.business_id]);
+  if (!r.rowCount) fail(404, 'Product not found');
+  res.json({ ok: true });
+}));
+app.delete('/api/products/:id/image', ...managers, wrap(async (req, res) => {
+  const r = await pool.query(
+    'UPDATE products SET image=NULL, image_type=NULL, image_updated_at=NULL WHERE id=$1 AND business_id=$2',
+    [req.params.id, req.user.business_id]);
+  if (!r.rowCount) fail(404, 'Product not found');
+  res.json({ ok: true });
 }));
 function productFields(body) {
   return [
@@ -657,6 +702,7 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, req, res, next) => {
   if (err.status) return res.status(err.status).json({ error: err.message });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'That upload is too large' });
   console.error(err);
   res.status(500).json({ error: 'Something went wrong on the server' });
 });
