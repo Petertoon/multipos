@@ -65,5 +65,6 @@ table.list th, table.list td { text-align: left; padding: 10px 12px; border-bott
 table.list th { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; background: #fafbf9; }
 table.list td.num, table.list th.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.list tr.off td { color: #aaa; }
+.badge { background: #e74c3c; color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
 .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #eef1ec; font-weight: 700; }
 .pill.off { background: #f5e1df; color: var(--danger); }
