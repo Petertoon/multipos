@@ -104,6 +104,102 @@ CREATE INDEX IF NOT EXISTS sales_business_date ON sales(business_id, created_at)
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_token TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sales_receipt_token ON sales(receipt_token) WHERE receipt_token IS NOT NULL;
 
+-- Split pay: each sale has one or more payments (cash + card, etc.).
+ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_payment_method_check;
+ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check CHECK (payment_method IN ('cash','card','other','split'));
+CREATE TABLE IF NOT EXISTS sale_payments (
+  id SERIAL PRIMARY KEY,
+  sale_id INT NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+  method TEXT NOT NULL CHECK (method IN ('cash','card','other')),
+  amount_cents INT NOT NULL CHECK (amount_cents > 0),
+  tendered_cents INT,
+  change_cents INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sale_payments_sale ON sale_payments(sale_id);
+-- Sales made before split pay existed get their single payment recorded once.
+INSERT INTO sale_payments (sale_id, method, amount_cents, tendered_cents, change_cents)
+  SELECT s.id, s.payment_method, s.total_cents, s.tendered_cents, s.change_cents FROM sales s
+   WHERE s.payment_method <> 'split' AND s.total_cents > 0
+     AND NOT EXISTS (SELECT 1 FROM sale_payments p WHERE p.sale_id = s.id);
+
+-- ===== Rentals add-on (switched on per business by the platform admin) =====
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS rentals_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS half_day_hours INT NOT NULL DEFAULT 4;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_rental BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS rate_half_day INT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS rate_day INT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS rate_week INT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS rate_month INT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS rental_units INT NOT NULL DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS rentals (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  location_id INT REFERENCES locations(id) ON DELETE SET NULL,
+  sale_id INT REFERENCES sales(id) ON DELETE SET NULL,
+  product_id INT REFERENCES products(id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  qty INT NOT NULL DEFAULT 1,
+  period TEXT NOT NULL CHECK (period IN ('half_day','day','week','month')),
+  period_count INT NOT NULL DEFAULT 1,
+  paid_cents INT NOT NULL,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT,
+  start_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  due_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'out' CHECK (status IN ('out','returned')),
+  returned_at TIMESTAMPTZ,
+  returned_by INT REFERENCES users(id) ON DELETE SET NULL,
+  late_charge_cents INT,
+  refund_cents INT,
+  return_note TEXT
+);
+CREATE INDEX IF NOT EXISTS rentals_business ON rentals(business_id, status, due_at);
+
+-- Gift cards (used for rental refunds, and spendable at checkout).
+CREATE TABLE IF NOT EXISTS gift_cards (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  code TEXT NOT NULL UNIQUE,
+  initial_cents INT NOT NULL,
+  balance_cents INT NOT NULL CHECK (balance_cents >= 0),
+  customer_name TEXT,
+  customer_phone TEXT,
+  source TEXT,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE sale_payments DROP CONSTRAINT IF EXISTS sale_payments_method_check;
+ALTER TABLE sale_payments ADD CONSTRAINT sale_payments_method_check CHECK (method IN ('cash','card','other','gift_card'));
+ALTER TABLE sale_payments ADD COLUMN IF NOT EXISTS gift_card_id INT REFERENCES gift_cards(id) ON DELETE SET NULL;
+ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_payment_method_check;
+ALTER TABLE sales ADD CONSTRAINT sales_payment_method_check CHECK (payment_method IN ('cash','card','other','split','gift_card'));
+
+-- Money given back to customers (early rental returns): cash from the drawer, a gift card,
+-- or "check" = owed, kept on a ledger until the store mails a check.
+CREATE TABLE IF NOT EXISTS refunds (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  location_id INT REFERENCES locations(id) ON DELETE SET NULL,
+  register_id INT REFERENCES registers(id) ON DELETE SET NULL,
+  rental_id INT REFERENCES rentals(id) ON DELETE SET NULL,
+  amount_cents INT NOT NULL CHECK (amount_cents > 0),
+  method TEXT NOT NULL CHECK (method IN ('cash','gift_card','check')),
+  gift_card_id INT REFERENCES gift_cards(id) ON DELETE SET NULL,
+  customer_name TEXT,
+  customer_phone TEXT,
+  mailing_address TEXT,
+  note TEXT,
+  status TEXT NOT NULL CHECK (status IN ('done','owed','paid')),
+  check_number TEXT,
+  paid_at TIMESTAMPTZ,
+  paid_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS refunds_business ON refunds(business_id, status, created_at);
+
 -- Items scanned at the register that aren't in Products yet, waiting for management.
 CREATE TABLE IF NOT EXISTS pending_items (
   id SERIAL PRIMARY KEY,
