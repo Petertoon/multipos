@@ -293,6 +293,46 @@ CREATE TABLE IF NOT EXISTS quotes (
 );
 CREATE INDEX IF NOT EXISTS quotes_business ON quotes(business_id, status, created_at);
 
+-- ===== QuickBooks Online (add-on, switched on per business by the platform admin) =====
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS qbo_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS time_zone TEXT NOT NULL DEFAULT 'America/Chicago';
+CREATE TABLE IF NOT EXISTS qbo_connections (
+  business_id INT PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+  realm_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  company_name TEXT,
+  access_token_enc TEXT NOT NULL,
+  refresh_token_enc TEXT NOT NULL,
+  access_expires_at TIMESTAMPTZ NOT NULL,
+  refresh_expires_at TIMESTAMPTZ,
+  mapping JSONB NOT NULL DEFAULT '{}'::jsonb,
+  sync_from DATE,
+  last_sync_at TIMESTAMPTZ,
+  last_sync_error TEXT,
+  connected_by INT REFERENCES users(id) ON DELETE SET NULL,
+  connected_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- One row per thing sent to QuickBooks (a day's summary for a location, or a deposit).
+CREATE TABLE IF NOT EXISTS qbo_syncs (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  realm_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('day','deposit')),
+  ref TEXT NOT NULL,
+  location_id INT,
+  day DATE,
+  deposit_id INT,
+  qbo_type TEXT,
+  qbo_id TEXT,
+  sync_token TEXT,
+  amount_cents INT,
+  payload_hash TEXT,
+  status TEXT NOT NULL,
+  error TEXT,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (business_id, realm_id, kind, ref)
+);
+
 -- Items scanned at the register that aren't in Products yet, waiting for management.
 CREATE TABLE IF NOT EXISTS pending_items (
   id SERIAL PRIMARY KEY,
