@@ -166,7 +166,7 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
@@ -255,6 +255,10 @@ app.put('/api/business', ...biz, requireRole('owner'), wrap(async (req, res) => 
   if (logo && !/^https:\/\//.test(logo)) fail(400, 'Logo URL must start with https://');
   await pool.query('UPDATE businesses SET name=$1, accent_color=$2, logo_url=$3 WHERE id=$4',
     [name, color, logo || null, req.user.business_id]);
+  if ('deposit_account' in req.body) {
+    await pool.query('UPDATE businesses SET deposit_account=$1 WHERE id=$2',
+      [text(req.body.deposit_account, 'Bank account', { required: false, max: 120 }) || null, req.user.business_id]);
+  }
   if (req.body.half_day_hours != null && req.body.half_day_hours !== '') {
     const h = parseInt(req.body.half_day_hours, 10);
     if (!(h >= 1 && h <= 12)) fail(400, 'Half day must be 1 to 12 hours');
@@ -461,6 +465,7 @@ app.get('/api/registers/:id/state', ...biz, wrap(async (req, res) => {
     register: { id: r.id, name: r.name, location_id: r.location_id, location_name: r.location_name,
       tax_rate: Number(r.tax_rate) },
     cart: r.cart, totals: computeTotals(r.cart, r.tax_rate),
+    sale_info: await saleInfoView(r.sale_info, req.user.business_id),
     pair_url: pairUrl,
     pair_qr_svg: await QRCode.toString(pairUrl, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }),
   });
@@ -592,7 +597,8 @@ function checkPayments(body, total) {
   if (!list.length) fail(400, 'Add a payment');
   if (list.length > 10) fail(400, 'Too many payments (10 max)');
   list = list.map((p) => {
-    const method = ['cash', 'card', 'other', 'gift_card'].includes(p.method) ? p.method : fail(400, 'Choose a payment method');
+    const method = ['cash', 'card', 'other', 'gift_card', 'check', 'account'].includes(p.method) ? p.method : fail(400, 'Choose a payment method');
+    const checkNumber = method === 'check' ? (text(p.check_number, 'Check number', { required: false, max: 40 }) || null) : null;
     const amount = cents(p.amount_cents, 'Payment amount');
     if (amount <= 0) fail(400, 'Each payment must be more than $0.00');
     const giftCode = method === 'gift_card' ? normalizeGiftCode(p.gift_code) : null;
@@ -603,7 +609,7 @@ function checkPayments(body, total) {
       if (tendered < amount) fail(400, 'Cash received is less than the cash payment');
       change = tendered - amount;
     }
-    return { method, amount, tendered, change, giftCode, giftCardId: null };
+    return { method, amount, tendered, change, giftCode, giftCardId: null, checkNumber };
   });
   const paid = list.reduce((a, p) => a + p.amount, 0);
   if (paid !== total) fail(400, paid < total
@@ -618,12 +624,29 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `SELECT r.id, r.cart, r.location_id, l.tax_rate FROM registers r JOIN locations l ON l.id = r.location_id
+      `SELECT r.id, r.cart, r.sale_info, r.location_id, l.tax_rate FROM registers r JOIN locations l ON l.id = r.location_id
         WHERE r.id = $1 AND l.business_id = $2 FOR UPDATE OF r`, [req.params.id, req.user.business_id]);
     const reg = rows[0] || fail(404, 'Register not found');
     if (!reg.cart.length) fail(400, 'The cart is empty');
     const t = computeTotals(reg.cart, reg.tax_rate);
     const payments = t.total_cents > 0 ? checkPayments(req.body, t.total_cents) : [];
+    const info = reg.sale_info || {};
+    // Customer on the sale (and charge account rules).
+    let cust = null;
+    if (info.customer_id) {
+      const c = await client.query(`SELECT c.*, ${BALANCE_SQL} AS balance_cents FROM customers c WHERE c.id=$1 AND c.business_id=$2`,
+        [info.customer_id, req.user.business_id]);
+      cust = c.rows[0] || null;
+    }
+    const onAccount = payments.filter((p) => p.method === 'account').reduce((a, p) => a + p.amount, 0);
+    if (onAccount) {
+      if (!cust) fail(400, 'Choose a customer with a charge account first');
+      if (!cust.charge_account) fail(400, `${cust.name} does not have a charge account`);
+      if (cust.credit_limit_cents != null && cust.balance_cents + onAccount > cust.credit_limit_cents) {
+        fail(400, `This would put ${cust.name} over their $${(cust.credit_limit_cents / 100).toFixed(2)} credit limit ` +
+          `(balance now $${(cust.balance_cents / 100).toFixed(2)})`);
+      }
+    }
     const method = payments.length > 1 ? 'split' : (payments[0]?.method
       || (['cash', 'card', 'other'].includes(req.body.payment_method) ? req.body.payment_method : 'cash'));
     const cashParts = payments.filter((p) => p.method === 'cash');
@@ -631,11 +654,18 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
     const change = cashParts.length ? cashParts.reduce((a, p) => a + p.change, 0) : null;
     const s = await client.query(
       `INSERT INTO sales (business_id, location_id, register_id, user_id, subtotal_cents, tax_cents, total_cents,
-         tax_rate, payment_method, tendered_cents, change_cents, receipt_token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+         tax_rate, payment_method, tendered_cents, change_cents, receipt_token,
+         customer_id, customer_name, customer_phone, po_number, job_address, job_lat, job_lng, quote_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
       [req.user.business_id, reg.location_id, reg.id, req.user.id, t.subtotal_cents, t.tax_cents, t.total_cents,
-        reg.tax_rate, method, tendered, change, token(16)]);
+        reg.tax_rate, method, tendered, change, token(16),
+        cust ? cust.id : null, cust ? cust.name : (info.customer_name || null), cust ? cust.phone : (info.customer_phone || null),
+        info.po_number || null, info.job_address || null, info.job_lat ?? null, info.job_lng ?? null, info.quote_id || null]);
     saleId = s.rows[0].id;
+    if (info.quote_id) {
+      await client.query(`UPDATE quotes SET status='sold', sale_id=$1 WHERE id=$2 AND business_id=$3`,
+        [saleId, info.quote_id, req.user.business_id]);
+    }
     for (const p of payments) {
       if (p.method === 'gift_card') {
         const g = await client.query('SELECT id, balance_cents FROM gift_cards WHERE business_id=$1 AND code=$2 FOR UPDATE',
@@ -646,8 +676,9 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
         p.giftCardId = g.rows[0].id;
       }
       await client.query(
-        `INSERT INTO sale_payments (sale_id, method, amount_cents, tendered_cents, change_cents, gift_card_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [saleId, p.method, p.amount, p.tendered, p.change, p.giftCardId]);
+        `INSERT INTO sale_payments (sale_id, method, amount_cents, tendered_cents, change_cents, gift_card_id, check_number)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [saleId, p.method, p.amount, p.tendered, p.change, p.giftCardId, p.checkNumber]);
     }
     // Prepaid rentals in this sale go on the "Rentals out" list.
     for (const it of reg.cart.filter((x) => x.rental)) {
@@ -668,12 +699,14 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
           [it.qty, it.product_id, req.user.business_id]);
       }
     }
-    await client.query(`UPDATE registers SET cart = '[]'::jsonb WHERE id = $1`, [reg.id]);
+    await client.query(`UPDATE registers SET cart = '[]'::jsonb, sale_info = '{}'::jsonb WHERE id = $1`, [reg.id]);
     await client.query('COMMIT');
     broadcast(reg.id, { type: 'cart', cart: [], totals: computeTotals([], reg.tax_rate), source: 'register',
       event: { kind: 'sale', sale_id: saleId } });
+    broadcast(reg.id, { type: 'sale-info', info: {} });
     res.json({ sale_id: saleId, ...t, payment_method: method, tendered_cents: tendered, change_cents: change,
-      payments: payments.map((p) => ({ method: p.method, amount_cents: p.amount, tendered_cents: p.tendered, change_cents: p.change })) });
+      payments: payments.map((p) => ({ method: p.method, amount_cents: p.amount, tendered_cents: p.tendered, change_cents: p.change,
+        check_number: p.checkNumber })) });
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
@@ -808,6 +841,382 @@ app.put('/api/products/:id', ...managers, wrap(async (req, res) => {
        rental_units=$14 WHERE id=$15 AND business_id=$16`,
     [...f, req.params.id, req.user.business_id]).catch(duplicateBarcode);
   if (!r.rowCount) fail(404, 'Product not found');
+  res.json({ ok: true });
+}));
+
+// ---------- reports ----------
+function reportRange(req) {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : fail(400, 'Choose a start date');
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : fail(400, 'Choose an end date');
+  const tz = /^[A-Za-z_]+\/[A-Za-z_]+$/.test(req.query.tz || '') ? req.query.tz : 'America/Chicago';
+  const loc = req.query.location_id ? Number(req.query.location_id) || null : null;
+  return { from, to, tz, loc };
+}
+// Sales tax collected, grouped by day, week, month or year.
+app.get('/api/reports/tax', ...managers, wrap(async (req, res) => {
+  const { from, to, tz, loc } = reportRange(req);
+  const group = ['day', 'week', 'month', 'year'].includes(req.query.group) ? req.query.group : 'day';
+  const params = [req.user.business_id, from, to, tz, group];
+  let where = `s.business_id = $1 AND NOT s.voided AND (s.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`;
+  if (loc) { params.push(loc); where += ` AND s.location_id = $${params.length}`; }
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc($5, s.created_at AT TIME ZONE $4), 'YYYY-MM-DD') AS period,
+            count(*)::int AS sales,
+            sum(s.subtotal_cents)::bigint AS subtotal,
+            sum((SELECT COALESCE(sum(i.line_cents), 0) FROM sale_items i WHERE i.sale_id = s.id AND i.taxable))::bigint AS taxable,
+            sum(s.tax_cents)::bigint AS tax,
+            sum(s.total_cents)::bigint AS total
+       FROM sales s WHERE ${where} GROUP BY 1 ORDER BY 1`, params);
+  const out = rows.map((r) => ({ period: r.period, sales: r.sales, subtotal: Number(r.subtotal), taxable: Number(r.taxable),
+    nontaxable: Number(r.subtotal) - Number(r.taxable), tax: Number(r.tax), total: Number(r.total) }));
+  const sum = (k) => out.reduce((a, r) => a + r[k], 0);
+  res.json({ group, rows: out, totals: { sales: sum('sales'), subtotal: sum('subtotal'), taxable: sum('taxable'),
+    nontaxable: sum('nontaxable'), tax: sum('tax'), total: sum('total') } });
+}));
+
+// All cash and checks taken in (sales + charge account payments), minus cash refunds.
+async function moneyRows(businessId, { from, to, tz, loc, undepositedOnly }) {
+  const params = [businessId];
+  // $2 = from, $3 = to, $4 = time zone (only when filtering by date).
+  if (!undepositedOnly) params.push(from, to, tz);
+  const dateCond = (col) => (undepositedOnly ? 'TRUE' : `(${col} AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`);
+  let locIdx = null;
+  if (loc) { params.push(loc); locIdx = params.length; }
+  const dep = (col) => (undepositedOnly ? `${col} IS NULL` : 'TRUE');
+  const { rows } = await pool.query(
+    `SELECT * FROM (
+       SELECT 's:' || p.id AS key, 'sale' AS kind, s.id AS ref_id, p.method, p.amount_cents, p.check_number,
+              COALESCE(s.customer_name, '') AS customer, s.created_at, p.deposit_id, s.location_id
+         FROM sale_payments p JOIN sales s ON s.id = p.sale_id
+        WHERE s.business_id = $1 AND NOT s.voided AND p.method IN ('cash','check') AND ${dateCond('s.created_at')} AND ${dep('p.deposit_id')}
+          ${locIdx ? `AND s.location_id = $${locIdx}` : ''}
+       UNION ALL
+       SELECT 'a:' || a.id, 'account', a.id, a.method, a.amount_cents, a.check_number, c.name, a.created_at, a.deposit_id, a.location_id
+         FROM account_payments a JOIN customers c ON c.id = a.customer_id
+        WHERE a.business_id = $1 AND NOT a.voided AND a.method IN ('cash','check') AND ${dateCond('a.created_at')} AND ${dep('a.deposit_id')}
+          ${locIdx ? `AND a.location_id = $${locIdx}` : ''}
+       UNION ALL
+       SELECT 'r:' || f.id, 'refund', f.id, 'cash', -f.amount_cents, NULL, COALESCE(f.customer_name, ''), f.created_at, f.deposit_id, f.location_id
+         FROM refunds f
+        WHERE f.business_id = $1 AND f.method = 'cash' AND ${dateCond('f.created_at')} AND ${dep('f.deposit_id')}
+          ${locIdx ? `AND f.location_id = $${locIdx}` : ''}
+     ) x ORDER BY created_at`, params);
+  return rows;
+}
+function summarizeMoney(rows) {
+  const cashIn = rows.filter((r) => r.method === 'cash' && r.amount_cents > 0);
+  const cashSales = cashIn.filter((r) => r.kind === 'sale').reduce((a, r) => a + r.amount_cents, 0);
+  const cashAccount = cashIn.filter((r) => r.kind === 'account').reduce((a, r) => a + r.amount_cents, 0);
+  const cashRefunds = -rows.filter((r) => r.kind === 'refund').reduce((a, r) => a + r.amount_cents, 0);
+  const checks = rows.filter((r) => r.method === 'check');
+  return { cash_sales: cashSales, cash_account: cashAccount, cash_refunds: cashRefunds,
+    cash_net: cashSales + cashAccount - cashRefunds,
+    checks_total: checks.reduce((a, r) => a + r.amount_cents, 0), check_count: checks.length, checks };
+}
+app.get('/api/reports/money', ...managers, wrap(async (req, res) => {
+  const range = reportRange(req);
+  const rows = await moneyRows(req.user.business_id, range);
+  // Day-by-day totals for the period.
+  const days = {};
+  const dayOf = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: range.tz });
+  for (const r of rows) {
+    const d = (days[dayOf(r.created_at)] ||= { day: dayOf(r.created_at), cash: 0, checks: 0, check_count: 0 });
+    if (r.method === 'check') { d.checks += r.amount_cents; d.check_count++; } else d.cash += r.amount_cents;
+  }
+  res.json({ ...summarizeMoney(rows), days: Object.values(days).sort((a, b) => a.day.localeCompare(b.day)) });
+}));
+
+// ---------- bank deposits ----------
+app.get('/api/deposits/pending', ...managers, wrap(async (req, res) => {
+  const loc = req.query.location_id ? Number(req.query.location_id) || null : null;
+  const rows = await moneyRows(req.user.business_id, { loc, undepositedOnly: true });
+  res.json(summarizeMoney(rows));
+}));
+app.post('/api/deposits', ...managers, wrap(async (req, res) => {
+  const loc = req.body.location_id ? Number(req.body.location_id) || null : null;
+  if (loc) {
+    const l = await pool.query('SELECT id FROM locations WHERE id=$1 AND business_id=$2', [loc, req.user.business_id]);
+    if (!l.rows[0]) fail(404, 'Location not found');
+  }
+  const rows = await moneyRows(req.user.business_id, { loc, undepositedOnly: true });
+  const sum = summarizeMoney(rows);
+  const wanted = new Set((Array.isArray(req.body.check_keys) ? req.body.check_keys : []).map(String));
+  const checks = sum.checks.filter((c) => wanted.has(c.key));
+  const includeCash = req.body.include_cash !== false;
+  const cash = includeCash ? (req.body.cash_cents == null || req.body.cash_cents === '' ? Math.max(0, sum.cash_net) : cents(req.body.cash_cents, 'Cash')) : 0;
+  if (!checks.length && !cash) fail(400, 'Nothing to deposit');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const d = await client.query(
+      `INSERT INTO deposits (business_id, location_id, cash_cents, cash_collected_cents, checks_cents, check_count, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [req.user.business_id, loc, cash, includeCash ? sum.cash_net : 0, checks.reduce((a, c) => a + c.amount_cents, 0), checks.length,
+        text(req.body.note, 'Note', { required: false, max: 300 }) || null, req.user.id]);
+    const id = d.rows[0].id;
+    const mark = async (key) => {
+      const [kind, rid] = key.split(':');
+      const table = { s: 'sale_payments', a: 'account_payments', r: 'refunds' }[kind];
+      await client.query(`UPDATE ${table} SET deposit_id = $1 WHERE id = $2 AND deposit_id IS NULL`, [id, Number(rid)]);
+    };
+    // Cash: everything collected since the last deposit is counted in this one.
+    if (includeCash) for (const r of rows.filter((x) => x.method === 'cash')) await mark(r.key);
+    for (const c of checks) await mark(c.key);
+    await client.query('COMMIT');
+    res.json({ id });
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+}));
+app.get('/api/deposits', ...managers, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT d.*, l.name AS location_name, u.name AS created_by_name FROM deposits d
+       LEFT JOIN locations l ON l.id = d.location_id LEFT JOIN users u ON u.id = d.created_by
+      WHERE d.business_id = $1 ORDER BY d.created_at DESC LIMIT 200`, [req.user.business_id]);
+  res.json(rows);
+}));
+app.get('/api/deposits/:id', ...managers, wrap(async (req, res) => {
+  const d = await pool.query(
+    `SELECT d.*, l.name AS location_name, l.address AS location_address, b.name AS business_name, b.deposit_account,
+            u.name AS created_by_name
+       FROM deposits d JOIN businesses b ON b.id = d.business_id LEFT JOIN locations l ON l.id = d.location_id
+       LEFT JOIN users u ON u.id = d.created_by WHERE d.id = $1 AND d.business_id = $2`, [req.params.id, req.user.business_id]);
+  if (!d.rows[0]) fail(404, 'Deposit not found');
+  const checks = await pool.query(
+    `SELECT p.check_number, p.amount_cents, COALESCE(s.customer_name, '') AS customer, s.created_at
+       FROM sale_payments p JOIN sales s ON s.id = p.sale_id WHERE p.deposit_id = $1 AND p.method = 'check'
+     UNION ALL
+     SELECT a.check_number, a.amount_cents, c.name, a.created_at
+       FROM account_payments a JOIN customers c ON c.id = a.customer_id WHERE a.deposit_id = $1 AND a.method = 'check'
+     ORDER BY 4`, [req.params.id]);
+  res.json({ ...d.rows[0], checks: checks.rows });
+}));
+
+// ---------- customers & charge accounts ----------
+// Account balance = charges to the account (on sales not voided) minus payments on the account.
+const BALANCE_SQL = `(COALESCE((SELECT sum(p.amount_cents) FROM sale_payments p JOIN sales s ON s.id = p.sale_id
+      WHERE s.customer_id = c.id AND p.method = 'account' AND NOT s.voided), 0)
+  - COALESCE((SELECT sum(a.amount_cents) FROM account_payments a WHERE a.customer_id = c.id AND NOT a.voided), 0))::int`;
+function customerFields(body, canSetAccount, current) {
+  const f = {
+    name: text(body.name, 'Customer name', { max: 120 }),
+    company: text(body.company, 'Company', { required: false, max: 120 }) || null,
+    phone: text(body.phone, 'Phone', { required: false, max: 40 }) || null,
+    email: text(body.email, 'Email', { required: false, max: 120 }) || null,
+    address: text(body.address, 'Address', { required: false, max: 300 }) || null,
+    notes: text(body.notes, 'Notes', { required: false, max: 500 }) || null,
+  };
+  // Only owners/managers can open a charge account or set a credit limit.
+  f.charge_account = canSetAccount ? !!body.charge_account : (current ? current.charge_account : false);
+  f.credit_limit_cents = canSetAccount ? optCents(body.credit_limit_cents, 'Credit limit') : (current ? current.credit_limit_cents : null);
+  f.active = body.active !== false;
+  return f;
+}
+const isManager = (u) => ['admin', 'owner', 'manager'].includes(u.role);
+const phoneDigits = (s) => String(s || '').replace(/\D/g, '');
+
+app.get('/api/customers', ...biz, wrap(async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  const params = [req.user.business_id];
+  let where = 'c.business_id = $1';
+  if (req.query.all !== '1') where += ' AND c.active';
+  if (req.query.accounts === '1') where += ' AND c.charge_account';
+  if (q) {
+    params.push(`%${q}%`);
+    const digits = phoneDigits(q);
+    where += ` AND (c.name ILIKE $2 OR c.company ILIKE $2 OR c.email ILIKE $2`;
+    if (digits.length >= 3) { params.push(`%${digits}%`); where += ` OR regexp_replace(COALESCE(c.phone,''), '\\D', '', 'g') LIKE $3`; }
+    where += ')';
+  }
+  const { rows } = await pool.query(
+    `SELECT c.*, ${BALANCE_SQL} AS balance_cents FROM customers c WHERE ${where} ORDER BY c.name LIMIT 200`, params);
+  res.json(rows);
+}));
+app.get('/api/customers/:id', ...biz, wrap(async (req, res) => {
+  const c = await pool.query(`SELECT c.*, ${BALANCE_SQL} AS balance_cents FROM customers c WHERE c.id=$1 AND c.business_id=$2`,
+    [req.params.id, req.user.business_id]);
+  if (!c.rows[0]) fail(404, 'Customer not found');
+  // Account activity: charges and payments, newest first.
+  const act = await pool.query(
+    `SELECT * FROM (
+       SELECT 'charge' AS kind, s.id AS ref_id, s.created_at, p.amount_cents, s.po_number, s.job_address, NULL AS method,
+              NULL AS check_number, s.voided
+         FROM sale_payments p JOIN sales s ON s.id = p.sale_id WHERE s.customer_id = $1 AND p.method = 'account'
+       UNION ALL
+       SELECT 'payment', a.id, a.created_at, a.amount_cents, NULL, NULL, a.method, a.check_number, a.voided
+         FROM account_payments a WHERE a.customer_id = $1
+     ) x ORDER BY created_at DESC LIMIT 300`, [req.params.id]);
+  const sales = await pool.query(
+    `SELECT id, created_at, total_cents, payment_method, po_number, voided FROM sales WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50`,
+    [req.params.id]);
+  const quotes = await pool.query(
+    `SELECT id, created_at, total_cents, status, po_number FROM quotes WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50`, [req.params.id]);
+  res.json({ ...c.rows[0], activity: act.rows, sales: sales.rows, quotes: quotes.rows });
+}));
+app.post('/api/customers', ...biz, wrap(async (req, res) => {
+  const f = customerFields(req.body, isManager(req.user));
+  const r = await pool.query(
+    `INSERT INTO customers (business_id, name, company, phone, email, address, notes, charge_account, credit_limit_cents, active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    [req.user.business_id, f.name, f.company, f.phone, f.email, f.address, f.notes, f.charge_account, f.credit_limit_cents, f.active]);
+  res.json({ id: r.rows[0].id });
+}));
+app.put('/api/customers/:id', ...biz, wrap(async (req, res) => {
+  const cur = await pool.query('SELECT * FROM customers WHERE id=$1 AND business_id=$2', [req.params.id, req.user.business_id]);
+  if (!cur.rows[0]) fail(404, 'Customer not found');
+  const f = customerFields(req.body, isManager(req.user), cur.rows[0]);
+  await pool.query(
+    `UPDATE customers SET name=$1, company=$2, phone=$3, email=$4, address=$5, notes=$6, charge_account=$7,
+       credit_limit_cents=$8, active=$9 WHERE id=$10`,
+    [f.name, f.company, f.phone, f.email, f.address, f.notes, f.charge_account, f.credit_limit_cents, f.active, req.params.id]);
+  res.json({ ok: true });
+}));
+// A payment toward a charge account balance (cash, check, card or other).
+app.post('/api/customers/:id/payments', ...biz, wrap(async (req, res) => {
+  const c = await pool.query('SELECT id FROM customers WHERE id=$1 AND business_id=$2', [req.params.id, req.user.business_id]);
+  if (!c.rows[0]) fail(404, 'Customer not found');
+  const method = ['cash', 'check', 'card', 'other'].includes(req.body.method) ? req.body.method : fail(400, 'Choose how they paid');
+  const amount = cents(req.body.amount_cents, 'Amount');
+  if (amount <= 0) fail(400, 'Enter the amount paid');
+  let locationId = null;
+  if (req.body.location_id) {
+    const l = await pool.query('SELECT id FROM locations WHERE id=$1 AND business_id=$2', [req.body.location_id, req.user.business_id]);
+    locationId = l.rows[0] ? l.rows[0].id : null;
+  }
+  const r = await pool.query(
+    `INSERT INTO account_payments (business_id, location_id, customer_id, method, amount_cents, check_number, note, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [req.user.business_id, locationId, req.params.id, method, amount,
+      method === 'check' ? (text(req.body.check_number, 'Check number', { required: false, max: 40 }) || null) : null,
+      text(req.body.note, 'Note', { required: false, max: 300 }) || null, req.user.id]);
+  res.json({ id: r.rows[0].id });
+}));
+app.post('/api/account-payments/:id/void', ...managers, wrap(async (req, res) => {
+  const r = await pool.query(
+    `UPDATE account_payments SET voided=TRUE WHERE id=$1 AND business_id=$2 AND NOT voided AND deposit_id IS NULL`,
+    [req.params.id, req.user.business_id]);
+  if (!r.rowCount) fail(400, 'Payment not found, already voided, or already deposited');
+  res.json({ ok: true });
+}));
+
+// ---------- sale details on a register (customer, PO, job site) ----------
+async function saleInfoView(info, businessId) {
+  info = info || {};
+  if (!info.customer_id) return info;
+  const c = await pool.query(
+    `SELECT c.id, c.name, c.company, c.phone, c.address, c.charge_account, c.credit_limit_cents, ${BALANCE_SQL} AS balance_cents
+       FROM customers c WHERE c.id=$1 AND c.business_id=$2`, [info.customer_id, businessId]);
+  return { ...info, customer: c.rows[0] || null };
+}
+function parseCoord(v, max) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || Math.abs(n) > max) fail(400, 'GPS location is not valid');
+  return Math.round(n * 1e6) / 1e6;
+}
+app.put('/api/registers/:id/sale-info', ...biz, wrap(async (req, res) => {
+  await getRegister(req.params.id, req.user.business_id);
+  const b = req.body;
+  let customerId = null;
+  if (b.customer_id) {
+    const c = await pool.query('SELECT id FROM customers WHERE id=$1 AND business_id=$2', [b.customer_id, req.user.business_id]);
+    customerId = c.rows[0] ? c.rows[0].id : fail(404, 'Customer not found');
+  }
+  const info = {
+    customer_id: customerId,
+    // Name/phone without a saved customer (e.g. from a quote for a walk-in).
+    customer_name: customerId ? null : (text(b.customer_name, 'Customer name', { required: false, max: 120 }) || null),
+    customer_phone: customerId ? null : (text(b.customer_phone, 'Customer phone', { required: false, max: 40 }) || null),
+    po_number: text(b.po_number, 'PO number', { required: false, max: 60 }) || null,
+    job_address: text(b.job_address, 'Job site address', { required: false, max: 300 }) || null,
+    job_lat: parseCoord(b.job_lat, 90), job_lng: parseCoord(b.job_lng, 180),
+    quote_id: b.quote_id ? Number(b.quote_id) || null : null,
+  };
+  if ((info.job_lat == null) !== (info.job_lng == null)) fail(400, 'GPS needs both latitude and longitude');
+  await pool.query('UPDATE registers SET sale_info=$1 WHERE id=$2', [JSON.stringify(info), req.params.id]);
+  const view = await saleInfoView(info, req.user.business_id);
+  broadcast(req.params.id, { type: 'sale-info', info: view });
+  res.json(view);
+}));
+
+// ---------- quotes ----------
+// Saves the register's current cart + details as a quote, then clears the register.
+app.post('/api/registers/:id/quote', ...biz, wrap(async (req, res) => {
+  const reg = await getRegister(req.params.id, req.user.business_id);
+  if (!reg.cart.length) fail(400, 'Add items before saving a quote');
+  const info = reg.sale_info || {};
+  let cust = null;
+  if (info.customer_id) cust = (await pool.query('SELECT * FROM customers WHERE id=$1', [info.customer_id])).rows[0] || null;
+  const name = cust ? cust.name : text(req.body.customer_name, 'Customer name', { max: 120 });
+  const phone = cust && cust.phone ? cust.phone : text(req.body.customer_phone, 'Customer phone', { max: 40 });
+  const days = Math.max(1, Math.min(365, parseInt(req.body.valid_days, 10) || 30));
+  const t = computeTotals(reg.cart, reg.tax_rate);
+  const q = await pool.query(
+    `INSERT INTO quotes (business_id, location_id, customer_id, customer_name, customer_phone, po_number, job_address, job_lat, job_lng,
+       cart, subtotal_cents, tax_cents, total_cents, tax_rate, note, valid_until, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, (now() + ($16 || ' days')::interval)::date, $17) RETURNING id`,
+    [req.user.business_id, reg.location_id, cust ? cust.id : null, name, phone, info.po_number || null, info.job_address || null,
+      info.job_lat ?? null, info.job_lng ?? null, JSON.stringify(reg.cart), t.subtotal_cents, t.tax_cents, t.total_cents,
+      reg.tax_rate, text(req.body.note, 'Note', { required: false, max: 500 }) || null, String(days), req.user.id]);
+  await pool.query(`UPDATE registers SET cart='[]'::jsonb, sale_info='{}'::jsonb WHERE id=$1`, [reg.id]);
+  broadcast(reg.id, { type: 'cart', cart: [], totals: computeTotals([], reg.tax_rate), source: 'register' });
+  broadcast(reg.id, { type: 'sale-info', info: {} });
+  res.json({ quote_id: q.rows[0].id });
+}));
+app.get('/api/quotes', ...biz, wrap(async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  const status = ['open', 'sold', 'canceled'].includes(req.query.status) ? req.query.status : 'open';
+  const params = [req.user.business_id, status];
+  let where = 'q.business_id = $1 AND q.status = $2';
+  if (q) {
+    params.push(`%${q}%`);
+    const digits = phoneDigits(q);
+    where += ` AND (q.customer_name ILIKE $3 OR q.po_number ILIKE $3 OR q.id::text = $${params.length + 1}`;
+    params.push(q.replace(/^#/, ''));
+    if (digits.length >= 3) { params.push(`%${digits}%`); where += ` OR regexp_replace(COALESCE(q.customer_phone,''), '\\D', '', 'g') LIKE $${params.length}`; }
+    where += ')';
+  }
+  const { rows } = await pool.query(
+    `SELECT q.id, q.customer_name, q.customer_phone, q.po_number, q.job_address, q.total_cents, q.status, q.valid_until,
+            q.created_at, q.sale_id, (q.valid_until < CURRENT_DATE) AS expired, u.name AS created_by_name,
+            jsonb_array_length(q.cart) AS line_count
+       FROM quotes q LEFT JOIN users u ON u.id = q.created_by WHERE ${where} ORDER BY q.created_at DESC LIMIT 200`, params);
+  res.json(rows);
+}));
+app.get('/api/quotes/:id', ...biz, wrap(async (req, res) => {
+  const q = await pool.query(
+    `SELECT q.*, b.name AS business_name, b.logo_url, l.name AS location_name, l.address AS location_address, l.phone AS location_phone,
+            u.name AS created_by_name, (q.valid_until < CURRENT_DATE) AS expired
+       FROM quotes q JOIN businesses b ON b.id = q.business_id LEFT JOIN locations l ON l.id = q.location_id
+       LEFT JOIN users u ON u.id = q.created_by WHERE q.id=$1 AND q.business_id=$2`, [req.params.id, req.user.business_id]);
+  if (!q.rows[0]) fail(404, 'Quote not found');
+  res.json(q.rows[0]);
+}));
+// Puts a quote's items and details on a register so it can be rung up at the quoted prices.
+app.post('/api/quotes/:id/load', ...biz, wrap(async (req, res) => {
+  const q = await pool.query('SELECT * FROM quotes WHERE id=$1 AND business_id=$2', [req.params.id, req.user.business_id]);
+  const quote = q.rows[0] || fail(404, 'Quote not found');
+  if (quote.status !== 'open') fail(400, `This quote is already ${quote.status === 'sold' ? 'sold' : 'canceled'}`);
+  const reg = await getRegister(req.body.register_id, req.user.business_id);
+  if (reg.cart.length && !req.body.replace) fail(409, 'The register already has items. Clear the sale first.');
+  const bset = (await pool.query('SELECT half_day_hours FROM businesses WHERE id=$1', [req.user.business_id])).rows[0];
+  // Rentals start now, so their due-back times are figured again from today.
+  const cart = quote.cart.map((it) => {
+    const copy = { ...it, key: token(6) };
+    if (copy.rental) copy.rental = { ...copy.rental, due_at: rentalDue(new Date(), copy.rental.period, copy.rental.count, bset.half_day_hours).toISOString() };
+    return copy;
+  });
+  const info = { customer_id: quote.customer_id, customer_name: quote.customer_name, customer_phone: quote.customer_phone,
+    po_number: quote.po_number, job_address: quote.job_address, job_lat: quote.job_lat, job_lng: quote.job_lng, quote_id: quote.id };
+  await pool.query('UPDATE registers SET cart=$1, sale_info=$2 WHERE id=$3', [JSON.stringify(cart), JSON.stringify(info), reg.id]);
+  const totals = computeTotals(cart, reg.tax_rate);
+  const view = await saleInfoView(info, req.user.business_id);
+  broadcast(reg.id, { type: 'cart', cart, totals, source: 'register' });
+  broadcast(reg.id, { type: 'sale-info', info: view });
+  res.json({ cart, totals, sale_info: view, tax_changed: Number(reg.tax_rate) !== Number(quote.tax_rate) });
+}));
+app.post('/api/quotes/:id/cancel', ...biz, wrap(async (req, res) => {
+  const r = await pool.query(`UPDATE quotes SET status='canceled' WHERE id=$1 AND business_id=$2 AND status='open'`,
+    [req.params.id, req.user.business_id]);
+  if (!r.rowCount) fail(400, 'Quote not found or not open');
   res.json({ ok: true });
 }));
 
@@ -1079,7 +1488,7 @@ const SALE_SELECT = `SELECT s.*, l.name AS location_name, l.address AS location_
        LEFT JOIN users u ON u.id = s.user_id LEFT JOIN registers r ON r.id = s.register_id`;
 async function saleWithItems(sale) {
   const items = await pool.query('SELECT name, barcode, qty, unit_cents, taxable, line_cents FROM sale_items WHERE sale_id = $1 ORDER BY id', [sale.id]);
-  const pays = await pool.query('SELECT method, amount_cents, tendered_cents, change_cents FROM sale_payments WHERE sale_id = $1 ORDER BY id', [sale.id]);
+  const pays = await pool.query('SELECT method, amount_cents, tendered_cents, change_cents, check_number FROM sale_payments WHERE sale_id = $1 ORDER BY id', [sale.id]);
   const rents = await pool.query('SELECT id, item_name, qty, due_at, customer_name FROM rentals WHERE sale_id = $1 ORDER BY id', [sale.id]);
   return { ...sale, items: items.rows, payments: pays.rows, rentals: rents.rows };
 }
@@ -1111,7 +1520,7 @@ app.get('/api/receipt/:token', wrap(async (req, res) => {
   const sale = await saleWithItems(s.rows[0]);
   const keep = ['id', 'created_at', 'subtotal_cents', 'tax_cents', 'total_cents', 'tax_rate', 'payment_method',
     'tendered_cents', 'change_cents', 'voided', 'location_name', 'location_address', 'location_phone',
-    'business_name', 'logo_url', 'items', 'payments', 'rentals'];
+    'business_name', 'logo_url', 'items', 'payments', 'rentals', 'customer_name', 'po_number', 'job_address', 'job_lat', 'job_lng'];
   const out = Object.fromEntries(keep.map((k) => [k, sale[k]]));
   out.cashier = sale.cashier ? sale.cashier.split(' ')[0] : null; // first name only
   res.set('Cache-Control', 'no-store');
