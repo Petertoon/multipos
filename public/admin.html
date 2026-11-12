@@ -27,6 +27,10 @@
   .thumb.none { display: flex; align-items: center; justify-content: center; color: #aab; font-size: 20px; }
   .photo-preview { width: 100%; max-height: 280px; object-fit: contain; background: #f4f5f3; border-radius: 10px; margin: 10px 0; }
   .photo-actions { display: grid; gap: 8px; }
+  .formhead { font-weight: 800; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .rentpill { background: #fff3e0; color: #8a4b00; }
+  button.rentson { background: #fff3e0; color: #8a4b00; }
+  .stat.refund b { color: #c0392b; }
   .badge { background: #e74c3c; color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
   .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
   .pcard { background: #fff; border-radius: 10px; padding: 12px; display: flex; gap: 12px; }
@@ -80,6 +84,7 @@ const TABS = [
   { id: 'businesses', label: 'Businesses', show: () => me.user.role === 'admin' && !me.business },
   { id: 'products', label: 'Products', show: () => !!me.business },
   { id: 'pending', label: 'Pending items', show: () => !!me.business },
+  { id: 'refunds', label: 'Refunds owed', show: () => !!(me.business && me.business.rentals_enabled) },
   { id: 'locations', label: 'Locations', show: () => !!me.business },
   { id: 'employees', label: 'Employees', show: () => !!me.business },
   { id: 'sales', label: 'Sales', show: () => !!me.business },
@@ -96,6 +101,26 @@ const PRODUCT_FORM = [
   { name: 'stock_qty', label: 'Quantity in stock', type: 'number' },
   { name: 'active', label: 'Show at checkout', type: 'check' },
 ];
+const RENTAL_FORM = [
+  { type: 'heading', name: '_rent', label: 'Rental', hint: 'Only for items you rent out. Leave a rate blank if you don\'t offer that period. Customers prepay.' },
+  { name: 'is_rental', label: 'This is a rental item', type: 'check' },
+  { name: 'rate_half_day', label: 'Half day rate', type: 'money' },
+  { name: 'rate_day', label: 'Day rate (multiple days = this × days)', type: 'money' },
+  { name: 'rate_week', label: 'Week rate', type: 'money' },
+  { name: 'rate_month', label: 'Month rate', type: 'money' },
+  { name: 'rental_units', label: 'How many of this item you have to rent', type: 'number' },
+];
+// The product form, with rental fields when this business has Rentals turned on.
+function productForm() {
+  if (!(me.business && me.business.rentals_enabled)) return PRODUCT_FORM;
+  return [...PRODUCT_FORM.map((f) => (f.name === 'price_cents'
+    ? { ...f, required: false, label: 'Price (for items you sell; leave blank for rental-only items)' } : f)), ...RENTAL_FORM];
+}
+// Saves a product form: blank price only allowed on rental items.
+function checkProduct(v) {
+  if (!v.is_rental && v.price_cents == null) throw new Error('Enter a price, or check "This is a rental item"');
+  return v;
+}
 let pendingCount = 0;
 
 // ---------- generic form modal ----------
@@ -105,6 +130,7 @@ function formModal(title, fields, values = {}, submitLabel = 'Save') {
     const f = $('#form');
     f.innerHTML = `<h2>${esc(title)}</h2>${fields.map((x) => {
       const v = values[x.name];
+      if (x.type === 'heading') return `<div class="formhead">${esc(x.label)}</div>${x.hint ? `<div class="muted" style="font-size:13px">${esc(x.hint)}</div>` : ''}`;
       if (x.type === 'check') return `<label class="check"><input type="checkbox" name="${x.name}" ${v ? 'checked' : ''}> ${esc(x.label)}</label>`;
       if (x.type === 'photo') return `<label>${esc(x.label)}</label><div class="photofield">
         <img data-photo-img alt="" ${v ? `src="${esc(v)}"` : 'hidden'}><div class="thumb none" data-photo-none ${v ? 'hidden' : ''}>📷</div>
@@ -146,7 +172,9 @@ function formModal(title, fields, values = {}, submitLabel = 'Save') {
         const el = f.elements[x.name];
         if (x.type === 'photo') out[x.name] = photo.data || (photo.removed && startPhoto ? 'remove' : null);
         else if (x.type === 'check') out[x.name] = el.checked;
+        else if (x.type === 'heading') continue;
         else if (x.type === 'money') {
+          if (!x.required && !el.value.trim()) { out[x.name] = null; continue; }
           const c = toCents(el.value);
           if (c === null) { $('#formErr').textContent = `${x.label}: enter an amount like 4.99`; return; }
           out[x.name] = c;
@@ -170,11 +198,12 @@ async function saveLoop(title, fields, values, fn, submitLabel) {
 async function showBusinesses() {
   const list = await api('/api/admin/businesses');
   $('#view').innerHTML = `<div class="bar"><h2>Businesses</h2><button class="primary" id="addBiz">+ New business</button></div>
-    <div class="tablewrap"><table class="list"><thead><tr><th>Business</th><th>Owner login</th><th class="num">Locations</th><th class="num">Users</th><th>Status</th><th></th></tr></thead><tbody>
+    <div class="tablewrap"><table class="list"><thead><tr><th>Business</th><th>Owner login</th><th class="num">Locations</th><th class="num">Users</th><th>Status</th><th>Add-ons</th><th></th></tr></thead><tbody>
     ${list.map((b) => `<tr class="${b.active ? '' : 'off'}"><td><b>${esc(b.name)}</b></td><td>${esc(b.owner_email || '')}</td><td class="num">${b.location_count}</td><td class="num">${b.user_count}</td>
       <td>${b.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
+      <td><button class="${b.rentals_enabled ? 'rentson' : 'ghost'}" data-rentals="${b.id}" data-on="${b.rentals_enabled}" title="Rentals add-on">🔑 Rentals ${b.rentals_enabled ? 'on' : 'off'}</button></td>
       <td style="white-space:nowrap"><button class="primary" data-enter="${b.id}">Open</button> <button data-toggle="${b.id}" data-active="${b.active}">${b.active ? 'Turn off' : 'Turn on'}</button></td></tr>`).join('')
-      || '<tr><td colspan="6" class="muted">No businesses yet. Create the first one.</td></tr>'}
+      || '<tr><td colspan="7" class="muted">No businesses yet. Create the first one.</td></tr>'}
     </tbody></table></div>`;
   $('#addBiz').onclick = async () => {
     if (await saveLoop('New business', [
@@ -187,7 +216,12 @@ async function showBusinesses() {
     ], { location_name: 'Main Location', tax_rate: 8.25 }, (v) => api('/api/admin/businesses', v), 'Create business')) showBusinesses();
   };
   $('#view').onclick = async (e) => {
-    const en = e.target.closest('[data-enter]'), tg = e.target.closest('[data-toggle]');
+    const en = e.target.closest('[data-enter]'), tg = e.target.closest('[data-toggle]'), rt = e.target.closest('[data-rentals]');
+    if (rt) {
+      const on = rt.dataset.on !== 'true';
+      if (!on && !confirm('Turn off Rentals for this business? Rental screens will be hidden. Nothing is deleted.')) return;
+      await api('/api/admin/businesses/' + rt.dataset.rentals, { rentals_enabled: on }, 'PUT'); showBusinesses(); return;
+    }
     if (en) { await api('/api/admin/enter/' + en.dataset.enter, {}); location.hash = 'products'; location.reload(); }
     if (tg) {
       const turnOn = tg.dataset.active !== 'true';
@@ -209,11 +243,11 @@ async function showProducts() {
     ${list.map((p) => `<tr class="${p.active ? '' : 'off'}">
       <td>${p.has_image ? `<img class="thumb" src="${productImg(p.id, p.image_version)}" alt="" loading="lazy">` : '<div class="thumb none">📷</div>'}</td>
       <td><b>${esc(p.name)}</b>${p.active ? '' : ' <span class="pill off">Hidden</span>'}</td><td>${esc(p.barcode || '')}</td><td>${esc(p.category || '')}</td>
-      <td class="num">${money(p.price_cents)}</td><td>${p.taxable ? 'Yes' : 'No'}</td><td class="num">${p.track_stock ? p.stock_qty : '—'}</td>
+      <td class="num">${p.is_rental ? `<span class="pill rentpill">Rental</span><div class="muted" style="font-size:12px">${[['rate_half_day', '½ day'], ['rate_day', 'day'], ['rate_week', 'week'], ['rate_month', 'month']].filter(([k]) => p[k] != null).map(([k, l]) => `${money(p[k])}/${l}`).join(' · ')}</div>` : money(p.price_cents)}</td><td>${p.taxable ? 'Yes' : 'No'}</td><td class="num">${p.is_rental ? p.rental_units + ' units' : p.track_stock ? p.stock_qty : '—'}</td>
       <td style="white-space:nowrap">${canEdit ? `<button data-edit="${p.id}">Edit</button> <button data-photo="${p.id}">Photo</button>` : ''}</td></tr>`).join('')
       || '<tr><td colspan="8" class="muted">No products found.</td></tr>'}</tbody></table></div>`;
   let t; $('#pq').oninput = () => { clearTimeout(t); t = setTimeout(() => { productQuery = $('#pq').value; showProducts().then(() => { const q = $('#pq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
-  const fields = PRODUCT_FORM;
+  const fields = productForm();
   // Saves the product, then its photo (if a new one was picked or it was removed).
   async function savePhoto(id, photo) {
     if (photo === 'remove') await api(`/api/products/${id}/image`, undefined, 'DELETE');
@@ -222,8 +256,8 @@ async function showProducts() {
   let createdId = null;
   if (canEdit) $('#addProd').onclick = async () => {
     createdId = null;
-    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0 }, async (v) => {
-      const { photo, ...product } = v;
+    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0, rental_units: 1 }, async (v) => {
+      const { photo, ...product } = checkProduct(v);
       // If the photo failed last time, don't create the product twice.
       if (!createdId) createdId = (await api('/api/products', product)).id;
       else await api('/api/products/' + createdId, product, 'PUT');
@@ -238,7 +272,7 @@ async function showProducts() {
     const p = list.find((x) => x.id === Number(b.dataset.edit));
     const values = { ...p, photo: p.has_image ? productImg(p.id, p.image_version) : null };
     if (await saveLoop('Edit product', fields, values, async (v) => {
-      const { photo, ...product } = v;
+      const { photo, ...product } = checkProduct(v);
       await api('/api/products/' + p.id, product, 'PUT');
       await savePhoto(p.id, photo);
     })) showProducts();
@@ -313,8 +347,8 @@ async function showPending() {
       const p = list.find((x) => x.id === Number(t.dataset.approve));
       const values = { name: p.name, barcode: p.barcode || '', price_cents: p.price_cents, taxable: true, active: true, stock_qty: 0,
         photo: p.has_image ? `/api/pending/${p.id}/image?v=${p.image_version}` : null };
-      if (await saveLoop('Approve: add to Products', PRODUCT_FORM, values,
-        (v) => api(`/api/pending/${p.id}/approve`, v), 'Add to Products')) showPending();
+      if (await saveLoop('Approve: add to Products', productForm(), { ...values, rental_units: 1 },
+        (v) => api(`/api/pending/${p.id}/approve`, checkProduct(v)), 'Add to Products')) showPending();
     }
   };
 }
@@ -322,6 +356,34 @@ function setPendingBadge(n) {
   pendingCount = n;
   const a = $('#nav a[href="#pending"]');
   if (a) a.innerHTML = 'Pending items' + (n ? ` <span class="badge">${n}</span>` : '');
+}
+
+// ---------- refunds owed (checks to mail) ----------
+let refundStatus = 'owed';
+async function showRefunds() {
+  const data = await api('/api/refunds?status=' + refundStatus);
+  const tab = (s, label) => `<button class="${s === refundStatus ? 'primary' : 'ghost'}" data-status="${s}">${label}</button>`;
+  const methodName = { cash: 'Cash', gift_card: 'Gift card', check: 'Check' };
+  $('#view').innerHTML = `<div class="bar"><h2>Refunds</h2>${tab('owed', `Checks to mail (${data.owed.n})`)}${tab('paid', 'Checks sent')}${tab('done', 'Cash & gift card refunds')}</div>
+    ${refundStatus === 'owed' ? `<p class="muted" style="margin-top:0">Rental refunds the customer chose to get by check. Total owed: <b>${money(data.owed.total)}</b>. Mark each one paid when the check is mailed.</p>` : ''}
+    <div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>Customer</th><th>For</th><th>How</th><th class="num">Amount</th><th></th></tr></thead><tbody>
+    ${data.refunds.map((f) => `<tr><td>${new Date(f.created_at).toLocaleDateString()}<div class="muted" style="font-size:12px">${esc(f.location_name || '')} · ${esc(f.created_by_name || '')}</div></td>
+      <td><b>${esc(f.customer_name || '')}</b><div class="muted" style="font-size:12px">${esc(f.customer_phone || '')}</div>${f.mailing_address ? `<div style="font-size:13px">${esc(f.mailing_address)}</div>` : ''}</td>
+      <td>${f.rental_item ? 'Rental #' + f.rental_id + ': ' + esc(f.rental_item) : ''}${f.note ? `<div class="muted" style="font-size:12px">${esc(f.note)}</div>` : ''}</td>
+      <td>${methodName[f.method]}${f.gift_code ? `<div class="muted" style="font-size:12px">${esc(f.gift_code)}</div>` : ''}${f.check_number ? `<div class="muted" style="font-size:12px">Check #${esc(f.check_number)}</div>` : ''}${f.paid_at ? `<div class="muted" style="font-size:12px">Sent ${new Date(f.paid_at).toLocaleDateString()}${f.paid_by_name ? ' by ' + esc(f.paid_by_name) : ''}</div>` : ''}</td>
+      <td class="num"><b>${money(f.amount_cents)}</b></td>
+      <td>${f.status === 'owed' ? `<button class="primary" data-paid="${f.id}">Mark check sent</button>` : ''}</td></tr>`).join('')
+      || `<tr><td colspan="6" class="muted">${refundStatus === 'owed' ? 'No checks owed. 👍' : 'None yet.'}</td></tr>`}</tbody></table></div>`;
+  $('#view').onclick = async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.status) { refundStatus = t.dataset.status; showRefunds(); return; }
+    if (t.dataset.paid) {
+      const num = prompt('Check number (optional):', '');
+      if (num === null) return;
+      try { await api(`/api/refunds/${t.dataset.paid}/paid`, { check_number: num }); toast('Marked as sent'); showRefunds(); }
+      catch (err) { toast(err.message, 'bad'); }
+    }
+  };
 }
 
 // ---------- locations & registers ----------
@@ -400,7 +462,7 @@ async function showSales() {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const q = new URLSearchParams({ ...salesFilter, tz });
   const data = await api('/api/sales?' + q);
-  const sum = (k) => data.summary.reduce((a, r) => a + r[k], 0);
+  const sum = (k) => data.totals[k];
   const by = (m) => data.summary.find((r) => r.payment_method === m) || { total: 0, n: 0 };
   $('#view').innerHTML = `<div class="bar"><h2>Sales</h2>
       <input type="date" id="sFrom" value="${salesFilter.from}"> to <input type="date" id="sTo" value="${salesFilter.to}">
@@ -412,10 +474,19 @@ async function showSales() {
       <div class="stat"><div>Cash (${by('cash').n})</div><b>${money(by('cash').total)}</b></div>
       <div class="stat"><div>Card (${by('card').n})</div><b>${money(by('card').total)}</b></div>
       <div class="stat"><div>Other (${by('other').n})</div><b>${money(by('other').total)}</b></div>
+      ${by('gift_card').n ? `<div class="stat"><div>Paid with gift cards (${by('gift_card').n})</div><b>${money(by('gift_card').total)}</b></div>` : ''}
+      ${(() => {
+        const rf = (m) => (data.refunds || []).find((r) => r.method === m) || { n: 0, total: 0 };
+        if (!(data.refunds || []).length) return '';
+        return `<div class="stat refund"><div>Cash refunds (${rf('cash').n})</div><b>−${money(rf('cash').total)}</b></div>
+          <div class="stat"><div>Cash in drawer from sales</div><b>${money(by('cash').total - rf('cash').total)}</b></div>
+          <div class="stat"><div>Gift cards issued (${rf('gift_card').n})</div><b>${money(rf('gift_card').total)}</b></div>
+          <div class="stat"><div>Checks owed (${rf('check').n})</div><b>${money(rf('check').total)}</b></div>`;
+      })()}
     </div>
     <div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Time</th><th>Location</th><th>Cashier</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
     ${data.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.location_name)} · ${esc(s.register_name || '')}</td>
-      <td>${esc(s.cashier || '')}</td><td>${esc(s.payment_method)}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
+      <td>${esc(s.cashier || '')}</td><td>${esc(paidByText(s))}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
       <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button class="wa" data-wa="${s.id}">WhatsApp</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No sales in this period.</td></tr>'}</tbody></table></div>`;
   const refresh = () => { salesFilter = { from: $('#sFrom').value, to: $('#sTo').value, location_id: $('#sLoc').value }; showSales(); };
@@ -437,13 +508,15 @@ async function showSettings() {
       <label>Business name</label><input id="bName" value="${esc(me.business.name)}">
       <label>Accent color</label><input id="bColor" type="color" value="${esc(me.business.accent_color)}" style="height:44px;padding:4px">
       <label>Logo image URL (https://…)</label><input id="bLogo" value="${esc(me.business.logo_url || '')}" placeholder="Optional">
+      ${me.business.rentals_enabled ? `<label>Rentals: a half day is how many hours?</label><input id="bHalf" type="number" min="1" max="12" value="${me.business.half_day_hours}">` : ''}
       <button class="primary" style="margin-top:14px" id="saveBiz">Save business</button></div>` : ''}
     <div class="settings"><h2 style="margin-top:0">My password</h2>
       <label>Current password</label><input id="pCur" type="password" autocomplete="current-password">
       <label>New password (8+ characters)</label><input id="pNew" type="password" autocomplete="new-password">
       <button class="primary" style="margin-top:14px" id="savePw">Change password</button></div>`;
   if (isOwner) $('#saveBiz').onclick = async () => {
-    try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
+    try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value,
+      half_day_hours: $('#bHalf') ? $('#bHalf').value : null }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
     catch (e) { toast(e.message, 'bad'); }
   };
   $('#savePw').onclick = async () => {
@@ -452,7 +525,7 @@ async function showSettings() {
   };
 }
 
-const views = { businesses: showBusinesses, products: showProducts, pending: showPending, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
+const views = { businesses: showBusinesses, products: showProducts, pending: showPending, refunds: showRefunds, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
 function route() {
   const tabs = TABS.filter((t) => t.show());
   let id = location.hash.slice(1);
