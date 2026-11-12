@@ -34,4 +34,27 @@ function toast(msg, kind = 'ok') {
 function applyBrand(business) {
   if (business && business.accent_color) document.documentElement.style.setProperty('--accent', business.accent_color);
 }
+// Photo address for a product; v changes whenever the photo changes.
+const productImg = (id, v) => `/api/products/${id}/image?v=${v}`;
+
+// Shrinks a picked/taken photo to a square-ish JPEG (max 600px) so uploads stay small.
+function resizeImage(file, max = 600) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) return reject(new Error('Choose an image file'));
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); // white behind transparent PNGs
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That image could not be opened')); };
+    img.src = url;
+  });
+}
 async function logout() { await api('/api/logout', {}); location.href = '/login'; }
