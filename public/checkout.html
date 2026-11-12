@@ -26,9 +26,12 @@
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
   .tabs button { background: #fff; border: 1px solid var(--line); }
   .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; max-height: 32vh; overflow: auto; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; max-height: 36vh; overflow: auto; align-items: start; }
   .tile { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 10px; text-align: left; min-height: 70px; }
   .tile b { display: block; font-size: 15px; }
+  .tile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; margin-bottom: 6px; background: #f1f3ef; }
+  .itemcell { display: flex; align-items: center; gap: 10px; }
+  .cthumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex: none; background: #f1f3ef; }
   .tile span { color: var(--muted); font-variant-numeric: tabular-nums; }
   .tile:active { transform: scale(.98); }
   .right { display: flex; flex-direction: column; gap: 12px; }
@@ -211,7 +214,8 @@ function renderCart(flashKey) {
   } else {
     $('#cart').innerHTML = `<table><thead><tr><th>Item</th><th>Qty</th><th class="num">Price</th><th class="num">Total</th><th></th></tr></thead><tbody>${
       c.map((it) => `<tr data-key="${it.key}" class="${it.key === flashKey ? 'flash' : ''}">
-        <td><b>${esc(it.name)}</b>${it.taxable ? '' : ' <span class="pill">no tax</span>'}${it.barcode ? `<div class="muted" style="font-size:12px">${esc(it.barcode)}</div>` : ''}</td>
+        <td><div class="itemcell">${it.img && it.product_id ? `<img class="cthumb" src="${productImg(it.product_id, it.img)}" alt="">` : ''}<div>
+          <b>${esc(it.name)}</b>${it.taxable ? '' : ' <span class="pill">no tax</span>'}${it.barcode ? `<div class="muted" style="font-size:12px">${esc(it.barcode)}</div>` : ''}</div></div></td>
         <td><span class="qty"><button data-act="minus">−</button><span>${it.qty}</span><button data-act="plus">+</button></span></td>
         <td class="num">${money(it.unit_cents)}</td>
         <td class="num"><b>${money(it.unit_cents * it.qty)}</b></td>
@@ -262,7 +266,7 @@ function renderProducts(list) {
   const cats = ['All', ...new Set(products.map((p) => p.category).filter(Boolean))];
   $('#tabs').innerHTML = cats.length > 1 ? cats.map((c) => `<button class="${c === category ? 'on' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('') : '';
   const shown = list || products.filter((p) => category === 'All' || p.category === category);
-  $('#grid').innerHTML = shown.map((p) => `<button class="tile" data-id="${p.id}"><b>${esc(p.name)}</b><span>${money(p.price_cents)}</span></button>`).join('')
+  $('#grid').innerHTML = shown.map((p) => `<button class="tile" data-id="${p.id}">${p.has_image ? `<img src="${productImg(p.id, p.image_version)}" alt="" loading="lazy">` : ''}<b>${esc(p.name)}</b><span>${money(p.price_cents)}</span></button>`).join('')
     || '<div class="muted">No products yet. Add them in Manage → Products.</div>';
 }
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; category = b.dataset.cat; renderProducts(); });
