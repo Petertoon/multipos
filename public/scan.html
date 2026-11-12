@@ -54,6 +54,12 @@
   form.inline.open { display: block; }
   form.inline button { width: 100%; margin-top: 12px; padding: 14px; }
   .tips ol { padding-left: 20px; margin: 6px 0; } .tips li { margin: 6px 0; }
+  .bcline { background: #f4f5f3; border-radius: 8px; padding: 8px 10px; font-size: 15px; }
+  label.report { background: #fff4d6; border-radius: 8px; padding: 10px; margin-top: 12px; }
+  .photorow { display: flex; align-items: center; gap: 10px; }
+  .photorow img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; flex: none; }
+  .photorow button { width: auto; margin-top: 0; padding: 12px 14px; }
+  form.inline #cCancel { margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -67,7 +73,7 @@
       <li>The button turns <b>red</b> while the camera is on.</li>
       <li>Hold the phone <b>4–8 inches</b> from the barcode, with the bars running <b>up and down</b> inside the white box.</li>
       <li>Hold still for a second. A beep and a green flash mean it worked, and the item appears below and on the register.</li>
-      <li>"Not found" means that barcode isn't in Products yet. Add it there, or tap "Enter a price for it".</li>
+      <li>"Not found" means that barcode isn't in Products yet. Tap <b>Add this item</b>, type what it is and the price, and take a photo. It's added to the sale and sent to management to add to Products.</li>
       <li>If it won't read: move a little farther back so it can focus, turn on the light, or tap <b>Type barcode</b> and type the numbers under the bars.</li>
     </ol>
   </div>
@@ -93,6 +99,9 @@
   </form>
 
   <form class="inline panel" id="customForm">
+    <h3 id="cTitle"><span>Custom amount</span></h3>
+    <div class="bcline" id="cBarcodeLine" hidden>Barcode: <b id="cBarcodeText"></b></div>
+    <input type="hidden" id="cBarcode">
     <label for="cName">Description</label>
     <input id="cName" placeholder="Custom item" maxlength="120">
     <label for="cPrice">Price</label>
@@ -100,7 +109,18 @@
     <label for="cQty">Quantity</label>
     <input id="cQty" type="number" inputmode="numeric" min="1" max="999" value="1">
     <label class="check"><input type="checkbox" id="cTax" checked> Taxable</label>
-    <button class="primary">Add to sale</button>
+    <label class="check report"><input type="checkbox" id="cReport"> Send to management to add to products</label>
+    <div id="cPhotoBox" hidden>
+      <label>Photo of the item (helps management)</label>
+      <div class="photorow">
+        <img id="cPhotoImg" alt="" hidden>
+        <button type="button" id="cPhotoBtn">📷 Take photo</button>
+        <button type="button" class="ghost" id="cPhotoClear" hidden>Remove</button>
+      </div>
+      <input type="file" id="cPhotoFile" accept="image/*" capture="environment" hidden>
+    </div>
+    <button class="primary" id="cSubmit">Add to sale</button>
+    <button type="button" class="ghost" id="cCancel">Cancel</button>
   </form>
 
   <div class="result" id="result"></div>
@@ -165,19 +185,60 @@ async function sendCode(code) {
     } else {
       beep(false);
       showResult('bad', `<b>Not found</b><div class="muted">No product with barcode ${esc(code)}.</div>
-        <button class="primary" style="margin-top:10px;width:100%" data-code="${esc(code)}" onclick="customFor(this.dataset.code)">Enter a price for it</button>`);
+        <button class="primary" style="margin-top:10px;width:100%" data-code="${esc(code)}" onclick="customFor(this.dataset.code)">Add this item</button>`);
     }
   } catch (e) { beep(false); showResult('bad', esc(e.message)); }
   finally { busy = false; }
 }
+// ---------- custom item / item not found ----------
+let cPhoto = null, resumeCamAfter = false;
+function resetCustom(code) {
+  $('#customForm').reset(); $('#cQty').value = 1; $('#cTax').checked = true;
+  $('#cBarcode').value = code || ''; $('#cBarcodeText').textContent = code || '';
+  $('#cBarcodeLine').hidden = !code;
+  $('#cTitle').firstElementChild.textContent = code ? 'Item not in the system' : 'Custom amount';
+  $('#cName').placeholder = code ? 'What is it? e.g. Lens wipes 100 ct' : 'Custom item';
+  $('#cReport').checked = !!code;
+  setPhoto(null); updateReport();
+}
+function setPhoto(dataUrl) {
+  cPhoto = dataUrl;
+  $('#cPhotoImg').hidden = !dataUrl; if (dataUrl) $('#cPhotoImg').src = dataUrl;
+  $('#cPhotoClear').hidden = !dataUrl;
+  $('#cPhotoBtn').textContent = dataUrl ? '📷 Retake' : '📷 Take photo';
+}
+function updateReport() {
+  const on = $('#cReport').checked;
+  $('#cPhotoBox').hidden = !on;
+  $('#cSubmit').textContent = on ? 'Add to sale & send to management' : 'Add to sale';
+}
+$('#cReport').addEventListener('change', updateReport);
+$('#cPhotoBtn').addEventListener('click', () => {
+  // The photo camera and the scanner can't both use the camera.
+  if (camState === 'on') { resumeCamAfter = true; stopCamera(); }
+  $('#cPhotoFile').click();
+});
+$('#cPhotoFile').addEventListener('change', async () => {
+  const f = $('#cPhotoFile').files[0]; $('#cPhotoFile').value = '';
+  if (!f) return;
+  try { setPhoto(await resizeImage(f)); } catch (e) { showResult('bad', esc(e.message)); }
+});
+$('#cPhotoClear').addEventListener('click', () => setPhoto(null));
+$('#cCancel').addEventListener('click', () => { $('#customForm').classList.remove('open'); afterCustom(); });
+function afterCustom() { if (resumeCamAfter) { resumeCamAfter = false; startCamera(); } }
+
 function customFor(code) {
-  toggleForm('customForm', true);
-  $('#cName').value = 'Item ' + code; $('#cPrice').value = ''; $('#cPrice').focus();
+  resetCustom(code);
+  $$('form.inline').forEach((x) => x.classList.remove('open'));
+  $('#customForm').classList.add('open');
+  $('#customForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#cName').focus();
 }
 
 function toggleForm(id, forceOpen) {
   const f = $('#' + id), open = forceOpen || !f.classList.contains('open');
   $$('form.inline').forEach((x) => x.classList.remove('open'));
+  if (id === 'customForm' && open) { customFor(''); return; }
   if (open) { f.classList.add('open'); f.querySelector('input').focus(); }
 }
 $('#typeForm').addEventListener('submit', (e) => {
@@ -187,14 +248,22 @@ $('#customForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const price = toCents($('#cPrice').value);
   if (price === null) { showResult('bad', 'Enter a valid price, like 5.00'); return; }
+  const report = $('#cReport').checked;
+  if (report && !$('#cName').value.trim()) { showResult('bad', 'Type a short description so management knows what it is.'); $('#cName').focus(); return; }
+  const body = { name: $('#cName').value, price_cents: price, qty: $('#cQty').value, taxable: $('#cTax').checked,
+    barcode: $('#cBarcode').value };
+  $('#cSubmit').disabled = true;
   try {
-    const r = await api(`/api/pair/${encodeURIComponent(pairToken)}/custom`,
-      { name: $('#cName').value, price_cents: price, qty: $('#cQty').value, taxable: $('#cTax').checked });
+    const r = report
+      ? await api(`/api/pair/${encodeURIComponent(pairToken)}/pending`, { ...body, photo: cPhoto })
+      : await api(`/api/pair/${encodeURIComponent(pairToken)}/custom`, body);
     render(r); beep(true);
-    showResult('ok', `Added <b>${esc(r.item.name)}</b> · ${r.item.qty} × ${money(r.item.unit_cents)}`);
-    $('#customForm').reset(); $('#cQty').value = 1; $('#cTax').checked = true;
+    showResult('ok', `Added <b>${esc(r.item.name)}</b> · ${r.item.qty} × ${money(r.item.unit_cents)}` +
+      (report ? '<div class="muted">✓ Sent to management to add to products</div>' : ''));
     $('#customForm').classList.remove('open');
+    afterCustom();
   } catch (err) { showResult('bad', esc(err.message)); }
+  finally { $('#cSubmit').disabled = false; }
 });
 $('#items').addEventListener('click', async (e) => {
   const b = e.target.closest('.x'); if (!b) return;
