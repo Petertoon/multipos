@@ -462,10 +462,10 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
     }
     const s = await client.query(
       `INSERT INTO sales (business_id, location_id, register_id, user_id, subtotal_cents, tax_cents, total_cents,
-         tax_rate, payment_method, tendered_cents, change_cents)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+         tax_rate, payment_method, tendered_cents, change_cents, receipt_token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
       [req.user.business_id, reg.location_id, reg.id, req.user.id, t.subtotal_cents, t.tax_cents, t.total_cents,
-        reg.tax_rate, method, tendered, change]);
+        reg.tax_rate, method, tendered, change, token(16)]);
     saleId = s.rows[0].id;
     for (const it of reg.cart) {
       await client.query(
@@ -667,16 +667,47 @@ app.get('/api/sales', ...managers, wrap(async (req, res) => {
        FROM sales s WHERE ${where} AND NOT s.voided GROUP BY s.payment_method`, params);
   res.json({ sales: list.rows, summary: sum.rows.map((r) => ({ ...r, total: Number(r.total), tax: Number(r.tax), subtotal: Number(r.subtotal) })) });
 }));
-app.get('/api/sales/:id', ...biz, wrap(async (req, res) => {
-  const s = await pool.query(
-    `SELECT s.*, l.name AS location_name, l.address AS location_address, l.phone AS location_phone,
+const SALE_SELECT = `SELECT s.*, l.name AS location_name, l.address AS location_address, l.phone AS location_phone,
             b.name AS business_name, b.logo_url, u.name AS cashier, r.name AS register_name
        FROM sales s JOIN locations l ON l.id = s.location_id JOIN businesses b ON b.id = s.business_id
-       LEFT JOIN users u ON u.id = s.user_id LEFT JOIN registers r ON r.id = s.register_id
-      WHERE s.id = $1 AND s.business_id = $2`, [req.params.id, req.user.business_id]);
+       LEFT JOIN users u ON u.id = s.user_id LEFT JOIN registers r ON r.id = s.register_id`;
+async function saleWithItems(sale) {
+  const items = await pool.query('SELECT name, barcode, qty, unit_cents, taxable, line_cents FROM sale_items WHERE sale_id = $1 ORDER BY id', [sale.id]);
+  return { ...sale, items: items.rows };
+}
+app.get('/api/sales/:id', ...biz, wrap(async (req, res) => {
+  const s = await pool.query(`${SALE_SELECT} WHERE s.id = $1 AND s.business_id = $2`, [req.params.id, req.user.business_id]);
   if (!s.rows[0]) fail(404, 'Sale not found');
-  const items = await pool.query('SELECT name, barcode, qty, unit_cents, taxable, line_cents FROM sale_items WHERE sale_id = $1 ORDER BY id', [req.params.id]);
-  res.json({ ...s.rows[0], items: items.rows });
+  const sale = await saleWithItems(s.rows[0]);
+  delete sale.receipt_token;
+  res.json(sale);
+}));
+// Everything needed to send a receipt by WhatsApp: the sale plus its private receipt link.
+app.post('/api/sales/:id/share', ...biz, wrap(async (req, res) => {
+  // Older sales (before this feature) get a link the first time they're shared.
+  await pool.query('UPDATE sales SET receipt_token = $1 WHERE id = $2 AND business_id = $3 AND receipt_token IS NULL',
+    [token(16), req.params.id, req.user.business_id]);
+  const s = await pool.query(`${SALE_SELECT} WHERE s.id = $1 AND s.business_id = $2`, [req.params.id, req.user.business_id]);
+  if (!s.rows[0]) fail(404, 'Sale not found');
+  const sale = await saleWithItems(s.rows[0]);
+  const url = `${publicOrigin(req)}/r#${sale.receipt_token}`;
+  delete sale.receipt_token;
+  res.json({ sale, url });
+}));
+// Public receipt view for customers (only reachable with the private link).
+app.get('/api/receipt/:token', wrap(async (req, res) => {
+  const t = String(req.params.token || '');
+  if (!/^[0-9a-f]{32}$/.test(t)) fail(404, 'Receipt not found');
+  const s = await pool.query(`${SALE_SELECT} WHERE s.receipt_token = $1`, [t]);
+  if (!s.rows[0]) fail(404, 'Receipt not found');
+  const sale = await saleWithItems(s.rows[0]);
+  const keep = ['id', 'created_at', 'subtotal_cents', 'tax_cents', 'total_cents', 'tax_rate', 'payment_method',
+    'tendered_cents', 'change_cents', 'voided', 'location_name', 'location_address', 'location_phone',
+    'business_name', 'logo_url', 'items'];
+  const out = Object.fromEntries(keep.map((k) => [k, sale[k]]));
+  out.cashier = sale.cashier ? sale.cashier.split(' ')[0] : null; // first name only
+  res.set('Cache-Control', 'no-store');
+  res.json(out);
 }));
 app.post('/api/sales/:id/void', ...managers, wrap(async (req, res) => {
   const client = await pool.connect();
