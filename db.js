@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS products (
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Product photos are stored small (resized in the browser) inside the database,
+-- because Render's server disk is wiped on every deploy.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS image BYTEA;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS image_type TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS image_updated_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS products_business_barcode
   ON products(business_id, barcode) WHERE barcode IS NOT NULL AND barcode <> '';
 
