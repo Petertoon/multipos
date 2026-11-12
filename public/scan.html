@@ -114,7 +114,11 @@ async function sendCode(code) {
   try {
     const r = await api(`/api/pair/${encodeURIComponent(pairToken)}/scan`, { code });
     render(r);
-    if (r.found) { beep(true); showResult('ok', `Added <b>${esc(r.item.name)}</b> · ${money(r.item.unit_cents)}<div class="muted">Qty in sale: ${r.item.qty}</div>`); }
+    if (r.found) {
+      beep(true);
+      const pic = r.item.img ? `<img src="/api/pair/${encodeURIComponent(pairToken)}/products/${r.item.product_id}/image?v=${r.item.img}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px;flex:none">` : '';
+      showResult('ok', `<div style="display:flex;gap:12px;align-items:center">${pic}<div>Added <b>${esc(r.item.name)}</b> · ${money(r.item.unit_cents)}<div class="muted">Qty in sale: ${r.item.qty}</div></div></div>`);
+    }
     else {
       beep(false);
       showResult('bad', `<b>Not found</b><div class="muted">No product with barcode ${esc(code)}.</div>
