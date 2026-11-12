@@ -27,6 +27,10 @@
   .thumb.none { display: flex; align-items: center; justify-content: center; color: #aab; font-size: 20px; }
   .photo-preview { width: 100%; max-height: 280px; object-fit: contain; background: #f4f5f3; border-radius: 10px; margin: 10px 0; }
   .photo-actions { display: grid; gap: 8px; }
+  .photofield { display: flex; gap: 12px; align-items: center; }
+  .photofield img { width: 84px; height: 84px; border-radius: 10px; object-fit: cover; background: #eef1ec; flex: none; }
+  .photofield .thumb { width: 84px; height: 84px; font-size: 28px; flex: none; }
+  .photobtns { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 </style>
 </head>
 <body>
@@ -79,6 +83,11 @@ function formModal(title, fields, values = {}, submitLabel = 'Save') {
     f.innerHTML = `<h2>${esc(title)}</h2>${fields.map((x) => {
       const v = values[x.name];
       if (x.type === 'check') return `<label class="check"><input type="checkbox" name="${x.name}" ${v ? 'checked' : ''}> ${esc(x.label)}</label>`;
+      if (x.type === 'photo') return `<label>${esc(x.label)}</label><div class="photofield">
+        <img data-photo-img alt="" ${v ? `src="${esc(v)}"` : 'hidden'}><div class="thumb none" data-photo-none ${v ? 'hidden' : ''}>📷</div>
+        <div class="photobtns"><button type="button" data-photo-pick>${v ? 'Change photo' : 'Choose or take a photo'}</button>
+        <button type="button" class="ghost" data-photo-clear ${v ? '' : 'hidden'}>Remove</button></div>
+        <input type="file" accept="image/*" data-photo-file hidden></div>`;
       if (x.type === 'select') return `<label>${esc(x.label)}</label><select name="${x.name}">${x.options.map((o) => `<option value="${esc(o.value)}" ${String(o.value) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
       const val = x.type === 'money' ? (v == null ? '' : (v / 100).toFixed(2)) : (v ?? '');
       const type = x.type === 'money' ? 'text' : (x.type || 'text');
@@ -87,6 +96,24 @@ function formModal(title, fields, values = {}, submitLabel = 'Save') {
     <div class="actions"><button type="button" class="ghost" id="formCancel">Cancel</button><button class="primary">${esc(submitLabel)}</button></div>`;
     $('#formModal').classList.add('open');
     const first = f.querySelector('input:not([type=checkbox]), select'); if (first) first.focus();
+    // Photo field state: a new photo (data URL), a removal, or unchanged.
+    const photoField = fields.find((x) => x.type === 'photo');
+    const startPhoto = photoField ? values[photoField.name] : null;
+    const photo = { data: startPhoto && String(startPhoto).startsWith('data:') ? startPhoto : null, removed: false };
+    if (photoField) {
+      const img = f.querySelector('[data-photo-img]'), none = f.querySelector('[data-photo-none]');
+      const pick = f.querySelector('[data-photo-pick]'), clear = f.querySelector('[data-photo-clear]'), file = f.querySelector('[data-photo-file]');
+      const show = (src) => { img.hidden = !src; none.hidden = !!src; clear.hidden = !src; if (src) img.src = src; pick.textContent = src ? 'Change photo' : 'Choose or take a photo'; };
+      pick.onclick = () => file.click();
+      file.onchange = async () => {
+        const fl = file.files[0]; file.value = ''; if (!fl) return;
+        pick.disabled = true; pick.textContent = 'Preparing…';
+        try { photo.data = await resizeImage(fl); photo.removed = false; show(photo.data); }
+        catch (e) { toast(e.message, 'bad'); show(img.hidden ? null : img.src); }
+        finally { pick.disabled = false; }
+      };
+      clear.onclick = () => { photo.data = null; photo.removed = true; show(null); };
+    }
     const close = (out) => { $('#formModal').classList.remove('open'); f.onsubmit = null; resolve(out); };
     $('#formCancel').onclick = () => close(null);
     f.onsubmit = (e) => {
@@ -94,7 +121,8 @@ function formModal(title, fields, values = {}, submitLabel = 'Save') {
       const out = {};
       for (const x of fields) {
         const el = f.elements[x.name];
-        if (x.type === 'check') out[x.name] = el.checked;
+        if (x.type === 'photo') out[x.name] = photo.data || (photo.removed && startPhoto ? 'remove' : null);
+        else if (x.type === 'check') out[x.name] = el.checked;
         else if (x.type === 'money') {
           const c = toCents(el.value);
           if (c === null) { $('#formErr').textContent = `${x.label}: enter an amount like 4.99`; return; }
@@ -164,6 +192,7 @@ async function showProducts() {
   let t; $('#pq').oninput = () => { clearTimeout(t); t = setTimeout(() => { productQuery = $('#pq').value; showProducts().then(() => { const q = $('#pq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
   const fields = [
     { name: 'name', label: 'Product name', required: true },
+    { name: 'photo', label: 'Photo', type: 'photo' },
     { name: 'barcode', label: 'Barcode (UPC / EAN / QR text)', hint: 'Leave blank for items without a barcode. A USB scanner can type it here.' },
     { name: 'category', label: 'Category', hint: 'Shown as a tab on the checkout screen, e.g. Drinks' },
     { name: 'price_cents', label: 'Price', type: 'money', required: true },
@@ -172,21 +201,34 @@ async function showProducts() {
     { name: 'stock_qty', label: 'Quantity in stock', type: 'number' },
     { name: 'active', label: 'Show at checkout', type: 'check' },
   ];
+  // Saves the product, then its photo (if a new one was picked or it was removed).
+  async function savePhoto(id, photo) {
+    if (photo === 'remove') await api(`/api/products/${id}/image`, undefined, 'DELETE');
+    else if (photo) await api(`/api/products/${id}/image`, { data_url: photo }, 'PUT');
+  }
+  let createdId = null;
   if (canEdit) $('#addProd').onclick = async () => {
-    let newId;
-    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0 },
-      async (v) => { newId = (await api('/api/products', v)).id; })) {
-      await showProducts();
-      const p = (await api('/api/products?all=1')).find((x) => x.id === newId);
-      if (p && confirm('Add a photo for ' + p.name + '?')) openPhoto(p);
-    }
+    createdId = null;
+    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0 }, async (v) => {
+      const { photo, ...product } = v;
+      // If the photo failed last time, don't create the product twice.
+      if (!createdId) createdId = (await api('/api/products', product)).id;
+      else await api('/api/products/' + createdId, product, 'PUT');
+      await savePhoto(createdId, photo);
+    })) showProducts();
+    else if (createdId) showProducts();
   };
   $('#view').onclick = async (e) => {
     const ph = e.target.closest('[data-photo]');
     if (ph) { openPhoto(list.find((x) => x.id === Number(ph.dataset.photo))); return; }
     const b = e.target.closest('[data-edit]'); if (!b) return;
     const p = list.find((x) => x.id === Number(b.dataset.edit));
-    if (await saveLoop('Edit product', fields, p, (v) => api('/api/products/' + p.id, v, 'PUT'))) showProducts();
+    const values = { ...p, photo: p.has_image ? productImg(p.id, p.image_version) : null };
+    if (await saveLoop('Edit product', fields, values, async (v) => {
+      const { photo, ...product } = v;
+      await api('/api/products/' + p.id, product, 'PUT');
+      await savePhoto(p.id, photo);
+    })) showProducts();
   };
 }
 
