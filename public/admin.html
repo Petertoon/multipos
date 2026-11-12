@@ -31,6 +31,9 @@
   tr.totrow td { font-weight: 800; background: #fafbf9; }
   h3 { margin: 18px 0 8px; }
   @media print { .topbar, .bar button, .bar select, .bar input, #actingBanner { display: none !important; } body { background: #fff; } }
+  button.qboon { background: #e6f4ea; color: #1b6e37; }
+  .qbbtn { background: #2ca01c; color: #fff; font-size: 17px; padding: 12px 22px; }
+  #qbMap select { width: 100%; }
   .formhead { font-weight: 800; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
   .rentpill { background: #fff3e0; color: #8a4b00; }
   button.rentson { background: #fff3e0; color: #8a4b00; }
@@ -92,6 +95,7 @@ const TABS = [
   { id: 'customers', label: 'Customers', show: () => !!me.business },
   { id: 'reports', label: 'Reports', show: () => !!me.business },
   { id: 'deposits', label: 'Deposits', show: () => !!me.business },
+  { id: 'quickbooks', label: 'QuickBooks', show: () => !!(me.business && me.business.qbo_enabled && role === 'owner') },
   { id: 'locations', label: 'Locations', show: () => !!me.business },
   { id: 'employees', label: 'Employees', show: () => !!me.business },
   { id: 'sales', label: 'Sales', show: () => !!me.business },
@@ -208,7 +212,8 @@ async function showBusinesses() {
     <div class="tablewrap"><table class="list"><thead><tr><th>Business</th><th>Owner login</th><th class="num">Locations</th><th class="num">Users</th><th>Status</th><th>Add-ons</th><th></th></tr></thead><tbody>
     ${list.map((b) => `<tr class="${b.active ? '' : 'off'}"><td><b>${esc(b.name)}</b></td><td>${esc(b.owner_email || '')}</td><td class="num">${b.location_count}</td><td class="num">${b.user_count}</td>
       <td>${b.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
-      <td><button class="${b.rentals_enabled ? 'rentson' : 'ghost'}" data-rentals="${b.id}" data-on="${b.rentals_enabled}" title="Rentals add-on">🔑 Rentals ${b.rentals_enabled ? 'on' : 'off'}</button></td>
+      <td style="white-space:nowrap"><button class="${b.rentals_enabled ? 'rentson' : 'ghost'}" data-rentals="${b.id}" data-on="${b.rentals_enabled}" title="Rentals add-on">🔑 Rentals ${b.rentals_enabled ? 'on' : 'off'}</button>
+        <button class="${b.qbo_enabled ? 'qboon' : 'ghost'}" data-qbo="${b.id}" data-on="${b.qbo_enabled}" title="QuickBooks add-on">QuickBooks ${b.qbo_enabled ? 'on' : 'off'}</button></td>
       <td style="white-space:nowrap"><button class="primary" data-enter="${b.id}">Open</button> <button data-toggle="${b.id}" data-active="${b.active}">${b.active ? 'Turn off' : 'Turn on'}</button></td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No businesses yet. Create the first one.</td></tr>'}
     </tbody></table></div>`;
@@ -224,6 +229,12 @@ async function showBusinesses() {
   };
   $('#view').onclick = async (e) => {
     const en = e.target.closest('[data-enter]'), tg = e.target.closest('[data-toggle]'), rt = e.target.closest('[data-rentals]');
+    const qb = e.target.closest('[data-qbo]');
+    if (qb) {
+      const on = qb.dataset.on !== 'true';
+      if (!on && !confirm('Turn off QuickBooks for this business? Syncing stops. Nothing already in QuickBooks is removed.')) return;
+      await api(`/api/admin/businesses/${qb.dataset.qbo}/qbo`, { enabled: on }, 'PUT'); showBusinesses(); return;
+    }
     if (rt) {
       const on = rt.dataset.on !== 'true';
       if (!on && !confirm('Turn off Rentals for this business? Rental screens will be hidden. Nothing is deleted.')) return;
@@ -390,7 +401,7 @@ async function showCustomers() {
     ${list.map((c) => `<tr class="${c.active ? '' : 'off'}"><td><b>${esc(c.name)}</b>${c.company ? `<div class="muted" style="font-size:12px">${esc(c.company)}</div>` : ''}</td>
       <td>${esc(c.phone || '')}</td><td style="font-size:13px">${esc(c.address || '')}</td>
       <td>${c.charge_account ? `<span class="pill rentpill">Charge account</span>${c.credit_limit_cents != null ? `<div class="muted" style="font-size:12px">Limit ${money(c.credit_limit_cents)}</div>` : ''}` : ''}</td>
-      <td class="num">${c.charge_account || c.balance_cents ? `<b>${money(c.balance_cents)}</b>` : ''}</td>
+      <td class="num">${c.charge_account || c.balance_cents ? `<b>${balText(c.balance_cents)}</b>` : ''}</td>
       <td style="white-space:nowrap"><button class="primary" data-open="${c.id}">Open</button> <button data-edit="${c.id}">Edit</button></td></tr>`).join('')
       || '<tr><td colspan="6" class="muted">No customers yet.</td></tr>'}</tbody></table></div>`;
   let t; $('#cq').oninput = () => { clearTimeout(t); t = setTimeout(() => { custQuery = $('#cq').value; showCustomers().then(() => { const q = $('#cq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
@@ -413,7 +424,7 @@ async function showCustomer(id) {
     <div class="cards">
       <div class="stat"><div>Phone</div><b style="font-size:18px">${esc(c.phone || '—')}</b></div>
       <div class="stat"><div>Address</div><div style="color:var(--ink)">${esc(c.address || '—')}</div></div>
-      ${c.charge_account ? `<div class="stat"><div>Balance owed</div><b>${money(c.balance_cents)}</b></div>
+      ${c.charge_account ? `<div class="stat"><div>${c.balance_cents < 0 ? 'Credit on account' : 'Balance owed'}</div><b>${money(Math.abs(c.balance_cents))}</b></div>
         <div class="stat"><div>Credit limit</div><b>${c.credit_limit_cents == null ? 'None' : money(c.credit_limit_cents)}</b></div>` : '<div class="stat"><div>Charge account</div><b style="font-size:18px">No</b></div>'}
     </div>
     ${c.charge_account || c.activity.length ? `<h3>Account activity</h3><div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Charge</th><th class="num">Payment</th><th></th></tr></thead><tbody>
@@ -435,7 +446,7 @@ async function showCustomer(id) {
     $('#stmt').onclick = () => window.open('/statement?id=' + c.id, '_blank', 'width=820,height=900');
     $('#takePay').onclick = async () => {
       if (await saveLoop('Payment on account · ' + c.name, [
-        { name: 'amount_cents', label: `Amount paid (balance ${money(c.balance_cents)})`, type: 'money', required: true },
+        { name: 'amount_cents', label: `Amount paid (balance ${balText(c.balance_cents)})`, type: 'money', required: true },
         { name: 'method', label: 'Paid with', type: 'select', options: [{ value: 'check', label: 'Check' }, { value: 'cash', label: 'Cash' }, { value: 'card', label: 'Card' }, { value: 'other', label: 'Other' }] },
         { name: 'check_number', label: 'Check number (for checks)' },
         { name: 'note', label: 'Note' },
@@ -580,6 +591,104 @@ async function showDeposits() {
     } catch (err) { toast(err.message, 'bad'); }
   };
   $('#view').onclick = (e) => { const b = e.target.closest('[data-slip]'); if (b) window.open('/deposit?id=' + b.dataset.slip, '_blank', 'width=760,height=900'); };
+}
+
+// ---------- QuickBooks Online ----------
+async function showQuickBooks() {
+  const s = await api('/api/qbo/status');
+  const msg = new URLSearchParams(location.hash.split('?')[1] || '').get('qbo');
+  if (location.hash.includes('?')) history.replaceState(null, '', '#quickbooks');
+  let html = `<div class="bar"><h2>QuickBooks Online</h2>${s.connected ? '<button class="ghost" id="qbDisc">Disconnect</button>' : ''}</div>
+    ${msg ? `<div class="warn" style="margin-bottom:12px">${esc(msg)}</div>` : ''}`;
+  if (!s.configured) {
+    $('#view').innerHTML = html + `<div class="settings"><p>QuickBooks isn't set up on this server yet. The platform administrator needs to add
+      <b>QBO_CLIENT_ID</b> and <b>QBO_CLIENT_SECRET</b> in Render → Environment.</p></div>`; return;
+  }
+  if (!s.connected) {
+    $('#view').innerHTML = html + `<div class="settings" style="max-width:620px">
+      <p>Connect this business's QuickBooks Online company. MultiPOS will send:</p>
+      <ul><li><b>One summary per day for each location</b>: sales, rentals, delivery & fuel, sales tax, and how customers paid.</li>
+        <li><b>Charge account payments and rental refunds</b>, inside that same daily summary.</li>
+        <li><b>Each bank deposit</b> you make in MultiPOS, so it matches your bank statement.</li></ul>
+      <p class="muted">Today's activity is sent after the day ends. You'll pick which QuickBooks accounts to use next.${s.environment === 'sandbox' ? ' <b>Test mode:</b> this connects to a QuickBooks sandbox company.' : ''}</p>
+      <button class="qbbtn" id="qbConnect">Connect to QuickBooks</button></div>`;
+    $('#qbConnect').onclick = async () => { try { location.href = (await api('/api/qbo/connect')).url; } catch (e) { toast(e.message, 'bad'); } };
+    return;
+  }
+  // Connected: account setup + sync.
+  let accounts = [];
+  try { accounts = await api('/api/qbo/accounts'); } catch (e) { html += `<div class="warn" style="margin-bottom:12px">${esc(e.message)}</div>`; }
+  const pick = (role) => {
+    const opts = accounts.filter((a) => role.types.includes(a.type));
+    return `<label>${esc(role.label)} <span class="muted" style="font-weight:400">(${role.types.join(' or ')})</span></label>
+      <select data-role="${role.key}"><option value="">Choose an account…</option>${opts.map((a) => `<option value="${a.id}" ${String(s.mapping[role.key]) === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`;
+  };
+  const yday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
+  const kindText = (l) => l.kind === 'deposit' ? `Deposit #${l.deposit_id}` : `${new Date(l.day + 'T12:00:00').toLocaleDateString()} · ${esc(l.location_name || '')}`;
+  html += `<div class="cards">
+      <div class="stat"><div>Connected to</div><b style="font-size:18px">${esc(s.company_name || 'QuickBooks company ' + s.realm_id)}</b>
+        <div style="font-size:12px">${s.connected_env === 'sandbox' ? 'Sandbox (test) company' : 'Live company'}</div></div>
+      <div class="stat"><div>Last sync</div><b style="font-size:18px">${s.last_sync_at ? new Date(s.last_sync_at).toLocaleString() : 'Not yet'}</b>
+        ${s.last_sync_error ? `<div style="font-size:12px;color:#c0392b">${esc(s.last_sync_error)}</div>` : ''}</div>
+      <div class="stat"><div>Status</div><b style="font-size:18px">${s.setup_done ? '✓ Syncing every hour' : 'Finish setup below'}</b></div>
+    </div>
+    <div class="settings" style="max-width:none">
+      <h3 style="margin-top:0">1. Accounts</h3>
+      <p class="muted" style="margin-top:0">Easiest: create the recommended MultiPOS accounts in QuickBooks, then choose your bank account. Have your accountant look this over once.</p>
+      <button id="qbMake">Create recommended accounts</button>
+      <div class="grid2" id="qbMap">${s.roles.map(pick).join('')}</div>
+      <h3>2. Start date</h3>
+      <p class="muted" style="margin-top:0">Days before this date are never sent (so nothing gets entered twice if your books already have them).</p>
+      <input type="date" id="qbFrom" value="${s.sync_from || yday}" style="max-width:220px">
+      <label>Time zone the business day follows</label>
+      <input id="qbTz" value="${esc(s.time_zone || 'America/Chicago')}" style="max-width:260px">
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="primary" id="qbSave">Save setup</button>
+        <button id="qbSync" ${s.setup_done ? '' : 'disabled'}>Sync now</button>
+        <input type="date" id="qbPrevDay" value="${yday}" style="max-width:180px"><button id="qbPrev">Preview a day</button>
+      </div>
+      <div id="qbPreview"></div>
+    </div>
+    <h3>Sent to QuickBooks</h3>
+    <div class="tablewrap"><table class="list"><thead><tr><th>What</th><th class="num">Amount</th><th>Status</th><th>When</th></tr></thead><tbody>
+      ${(s.log || []).map((l) => `<tr><td>${kindText(l)}</td><td class="num">${l.amount_cents != null ? money(l.amount_cents) : ''}</td>
+        <td>${l.status === 'ok' ? `<span class="pill">Sent</span>${l.qbo_id ? ` <span class="muted" style="font-size:12px">QuickBooks #${esc(l.qbo_id)}</span>` : ''}` : `<span class="pill off">Problem</span><div style="font-size:12px;color:#c0392b">${esc(l.error || '')}</div>`}</td>
+        <td>${new Date(l.synced_at).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Nothing sent yet.</td></tr>'}</tbody></table></div>`;
+  $('#view').innerHTML = html;
+  const mapping = () => Object.fromEntries($$('#qbMap select').map((x) => [x.dataset.role, x.value]));
+  $('#qbDisc').onclick = async () => {
+    if (!confirm('Disconnect QuickBooks? Syncing stops. Nothing already in QuickBooks is removed.')) return;
+    await api('/api/qbo/disconnect', {}); showQuickBooks();
+  };
+  $('#qbMake').onclick = async () => {
+    $('#qbMake').disabled = true; $('#qbMake').textContent = 'Creating…';
+    try { const r = await api('/api/qbo/accounts/recommended', {}); toast(r.created.length ? `Created ${r.created.length} accounts in QuickBooks` : 'Accounts already there; setup filled in'); showQuickBooks(); }
+    catch (e) { toast(e.message, 'bad'); $('#qbMake').disabled = false; $('#qbMake').textContent = 'Create recommended accounts'; }
+  };
+  $('#qbSave').onclick = async () => {
+    try {
+      const r = await api('/api/qbo/settings', { mapping: mapping(), sync_from: $('#qbFrom').value, time_zone: $('#qbTz').value.trim() }, 'PUT');
+      toast(r.setup_done ? 'Saved. Syncing will start within the hour, or press Sync now.' : 'Saved. Some accounts still need choosing.'); showQuickBooks();
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  $('#qbSync').onclick = async () => {
+    $('#qbSync').disabled = true; $('#qbSync').textContent = 'Syncing…';
+    try {
+      const r = await api('/api/qbo/sync', {});
+      if (r.skipped) toast(r.skipped, 'bad');
+      else toast(`Sent ${r.days_sent} days, updated ${r.days_updated}, ${r.deposits_sent} deposits${r.errors.length ? ` · ${r.errors.length} problems` : ''}`, r.errors.length ? 'bad' : 'ok');
+      showQuickBooks();
+    } catch (e) { toast(e.message, 'bad'); $('#qbSync').disabled = false; $('#qbSync').textContent = 'Sync now'; }
+  };
+  $('#qbPrev').onclick = async () => {
+    try {
+      const r = await api('/api/qbo/preview?day=' + $('#qbPrevDay').value);
+      $('#qbPreview').innerHTML = r.entries.length ? r.entries.map((e) => e.error ? `<p class="warn">${esc(e.location)}: ${esc(e.error)}</p>` : `<h4 style="margin:14px 0 6px">${esc(e.location)} · journal entry ${money(e.total_cents)}</h4>
+        <table class="list"><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th><th>Note</th></tr></thead><tbody>
+        ${e.lines.map((l) => `<tr><td>${esc(l.account)}</td><td class="num">${l.posting === 'Debit' ? money(l.cents) : ''}</td><td class="num">${l.posting === 'Credit' ? money(l.cents) : ''}</td><td style="font-size:13px">${esc(l.desc)}</td></tr>`).join('')}</tbody></table>`).join('')
+        : '<p class="muted">No activity that day.</p>';
+    } catch (e) { toast(e.message, 'bad'); }
+  };
 }
 
 // ---------- refunds owed (checks to mail) ----------
@@ -751,10 +860,10 @@ async function showSettings() {
 }
 
 const views = { businesses: showBusinesses, products: showProducts, pending: showPending, refunds: showRefunds,
-  customers: showCustomers, reports: showReports, deposits: showDeposits, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
+  customers: showCustomers, reports: showReports, deposits: showDeposits, quickbooks: showQuickBooks, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
 function route() {
   const tabs = TABS.filter((t) => t.show());
-  let id = location.hash.slice(1);
+  let id = location.hash.slice(1).split('?')[0];
   if (!tabs.some((t) => t.id === id)) id = tabs[0].id;
   $('#nav').innerHTML = (me.business ? '<a href="/checkout">Checkout</a>' : '') +
     tabs.map((t) => `<a href="#${t.id}" class="${t.id === id ? 'active' : ''}">${t.label}</a>`).join('');
