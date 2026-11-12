@@ -58,6 +58,25 @@ function resizeImage(file, max = 600) {
   });
 }
 // ---------- receipts ----------
+const PAY_NAMES = { cash: 'Cash', card: 'Card', other: 'Other', gift_card: 'Gift card' };
+// "Cash" or "Split: Cash $20.00 + Card $3.26"
+function paidByText(s) {
+  const p = s.payments || [];
+  if (p.length > 1) return 'Split: ' + p.map((x) => `${PAY_NAMES[x.method] || x.method} ${money(x.amount_cents)}`).join(' + ');
+  return PAY_NAMES[(p[0] && p[0].method) || s.payment_method] || s.payment_method;
+}
+// Receipt lines for how the sale was paid.
+function paymentLines(s) {
+  const p = s.payments && s.payments.length ? s.payments
+    : [{ method: s.payment_method, amount_cents: s.total_cents, tendered_cents: s.tendered_cents, change_cents: s.change_cents }];
+  return p.map((x) => {
+    const name = PAY_NAMES[x.method] || x.method;
+    if (x.method === 'cash' && x.tendered_cents != null && x.tendered_cents !== x.amount_cents) {
+      return { label: `${name} (received ${money(x.tendered_cents)})`, amount: x.amount_cents, change: x.change_cents };
+    }
+    return { label: name, amount: x.amount_cents, change: 0 };
+  });
+}
 function fmtDateTime(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
@@ -65,7 +84,6 @@ function fmtDateTime(iso) {
 }
 // Receipt HTML used by the printed receipt and the customer's link.
 function receiptHtml(s) {
-  const pay = { cash: 'Cash', card: 'Card', other: 'Other' }[s.payment_method] || s.payment_method;
   return `<div class="c">${s.logo_url ? `<img src="${esc(s.logo_url)}" alt="">` : ''}<h1>${esc(s.business_name)}</h1>
     <div>${esc(s.location_name)}</div>${s.location_address ? `<div>${esc(s.location_address)}</div>` : ''}${s.location_phone ? `<div>${esc(s.location_phone)}</div>` : ''}</div>
     <hr><div class="l"><span>Sale #${s.id}</span><span>${fmtDateTime(s.created_at)}</span></div>
@@ -76,20 +94,28 @@ function receiptHtml(s) {
     <hr><div class="l"><span>Subtotal</span><span>${money(s.subtotal_cents)}</span></div>
     <div class="l"><span>Tax (${Number(s.tax_rate)}%)</span><span>${money(s.tax_cents)}</span></div>
     <div class="l big"><span>TOTAL</span><span>${money(s.total_cents)}</span></div><hr>
-    <div class="l"><span>Paid by ${esc(pay)}</span><span>${money(s.tendered_cents ?? s.total_cents)}</span></div>
-    ${s.payment_method === 'cash' ? `<div class="l"><span>Change</span><span>${money(s.change_cents || 0)}</span></div>` : ''}
+    ${(() => {
+      const lines = paymentLines(s);
+      const change = lines.reduce((a, l) => a + (l.change || 0), 0);
+      return (lines.length > 1 ? '<div>Paid with:</div>' : '') +
+        lines.map((l) => `<div class="l"><span>${lines.length > 1 ? '&nbsp;&nbsp;' : 'Paid by '}${esc(l.label)}</span><span>${money(l.amount)}</span></div>`).join('') +
+        (lines.some((l) => l.label.startsWith('Cash')) ? `<div class="l"><span>Change</span><span>${money(change)}</span></div>` : '');
+    })()}
+    ${s.rentals && s.rentals.length ? `<hr><div><b>RENTAL${s.rentals.length > 1 ? 'S' : ''}</b></div>${s.rentals.map((r) =>
+      `<div>#${r.id} ${esc(r.item_name)}${r.qty > 1 ? ' ×' + r.qty : ''}</div><div class="l"><span>&nbsp;&nbsp;Due back</span><span><b>${fmtDateTime(r.due_at)}</b></span></div>`).join('')}
+      <div>Renter: ${esc(s.rentals[0].customer_name)}</div>` : ''}
     <hr><div class="c">Thank you!</div>`;
 }
 // Plain-text receipt for a WhatsApp message.
 function receiptText(s, url) {
-  const pay = { cash: 'Cash', card: 'Card', other: 'Other' }[s.payment_method] || s.payment_method;
   const lines = [`*${s.business_name}*`, s.location_name, `Receipt #${s.id} · ${fmtDateTime(s.created_at)}`, ''];
   const shown = s.items.slice(0, 25);
   for (const it of shown) lines.push(`${it.qty} × ${it.name} — ${money(it.line_cents)}`);
   if (s.items.length > shown.length) lines.push(`…and ${s.items.length - shown.length} more items`);
   lines.push('', `Subtotal: ${money(s.subtotal_cents)}`, `Tax (${Number(s.tax_rate)}%): ${money(s.tax_cents)}`,
-    `*Total: ${money(s.total_cents)}*`, `Paid: ${pay}`);
-  if (s.payment_method === 'cash' && s.change_cents) lines.push(`Change: ${money(s.change_cents)}`);
+    `*Total: ${money(s.total_cents)}*`, `Paid: ${paidByText(s)}`);
+  if (s.change_cents) lines.push(`Change: ${money(s.change_cents)}`);
+  for (const r of s.rentals || []) lines.push('', `Rental #${r.id}: ${r.item_name}${r.qty > 1 ? ' ×' + r.qty : ''}`, `*Due back: ${fmtDateTime(r.due_at)}*`);
   if (s.voided) lines.push('', 'THIS SALE WAS VOIDED');
   lines.push('', `View your receipt: ${url}`, '', 'Thank you!');
   return lines.join('\n');
