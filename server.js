@@ -13,7 +13,7 @@ app.set('trust proxy', 1);
 // Photo uploads need a bigger body limit than everything else.
 const jsonSmall = express.json({ limit: '200kb' });
 const jsonLarge = express.json({ limit: '4mb' });
-app.use((req, res, next) => (req.path.endsWith('/image') ? jsonLarge : jsonSmall)(req, res, next));
+app.use((req, res, next) => (/\/(image|pending|approve)$/.test(req.path) ? jsonLarge : jsonSmall)(req, res, next));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 // Barcode reader engine for the phone page, served from this app (no outside CDN needed).
@@ -396,8 +396,53 @@ async function scanIntoCart(registerId, businessId, code, source) {
 function customItem(body) {
   const name = text(body.name, 'Description', { required: false, max: 120 }) || 'Custom item';
   const qty = Math.max(1, Math.min(999, parseInt(body.qty, 10) || 1));
-  return { key: token(6), product_id: null, barcode: null, name, unit_cents: cents(body.price_cents, 'Price'),
+  const barcode = text(body.barcode, 'Barcode', { required: false, max: 100 }) || null;
+  return { key: token(6), product_id: null, barcode, name, unit_cents: cents(body.price_cents, 'Price'),
     qty, taxable: body.taxable !== false };
+}
+// Turns "data:image/jpeg;base64,..." into bytes, or null if no photo was sent.
+function photoFromBody(dataUrl) {
+  if (!dataUrl) return null;
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
+  if (!m) fail(400, 'Photo must be a JPEG, PNG or WebP image');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (bytes.length > 1.5 * 1024 * 1024) fail(400, 'Photo is too large (1.5 MB max)');
+  return { bytes, type: m[1] };
+}
+
+// Records an item that isn't in Products for management, and optionally adds it to the sale.
+// The same barcode reported again updates the existing pending entry instead of adding another.
+async function reportPending(reg, body, reportedBy, source) {
+  const item = customItem(body);
+  const note = text(body.note, 'Note', { required: false, max: 300 }) || null;
+  const photo = photoFromBody(body.photo);
+  let pendingId;
+  const existing = item.barcode ? await pool.query(
+    `SELECT id FROM pending_items WHERE business_id=$1 AND barcode=$2 AND status='pending' LIMIT 1`,
+    [reg.business_id, item.barcode]) : { rows: [] };
+  if (existing.rows[0]) {
+    pendingId = existing.rows[0].id;
+    await pool.query(
+      `UPDATE pending_items SET times_seen = times_seen + 1, updated_at = now(), name = $2, price_cents = $3,
+         note = COALESCE($4, note), reported_by = $5, location_id = $6, register_id = $7,
+         image = COALESCE($8, image), image_type = CASE WHEN $8::bytea IS NULL THEN image_type ELSE $9 END
+       WHERE id = $1`,
+      [pendingId, item.name, item.unit_cents, note, reportedBy, reg.location_id, reg.id, photo?.bytes || null, photo?.type || null]);
+  } else {
+    const r = await pool.query(
+      `INSERT INTO pending_items (business_id, location_id, register_id, barcode, name, price_cents, note, image, image_type, reported_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [reg.business_id, reg.location_id, reg.id, item.barcode, item.name, item.unit_cents, note,
+        photo?.bytes || null, photo?.type || null, reportedBy]);
+    pendingId = r.rows[0].id;
+  }
+  let out = {};
+  if (body.add_to_sale !== false) {
+    out = await mutateCart(reg.id, reg.business_id, async (cart) => {
+      cart.push(item); return { event: { kind: 'added', name: item.name } };
+    }, source);
+  }
+  return { pending_id: pendingId, item, ...out };
 }
 
 app.get('/api/registers/:id/state', ...biz, wrap(async (req, res) => {
@@ -425,6 +470,11 @@ app.post('/api/registers/:id/cart/product', ...biz, wrap(async (req, res) => {
 app.post('/api/registers/:id/cart/custom', ...biz, wrap(async (req, res) => {
   const item = customItem(req.body);
   res.json(await mutateCart(req.params.id, req.user.business_id, async (cart) => { cart.push(item); }, 'register'));
+}));
+app.post('/api/registers/:id/cart/pending', ...biz, wrap(async (req, res) => {
+  const reg = await getRegister(req.params.id, req.user.business_id);
+  const out = await reportPending(reg, req.body, `${req.user.name} · ${reg.location_name} · ${reg.name}`, 'register');
+  res.json({ pending_id: out.pending_id, item: out.item, cart: out.cart, totals: out.totals });
 }));
 app.post('/api/registers/:id/cart/qty', ...biz, wrap(async (req, res) => {
   const qty = parseInt(req.body.qty, 10);
@@ -491,7 +541,7 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
 // ---------- phone scanner (paired by QR code, no login) ----------
 async function registerByPair(t) {
   const { rows } = await pool.query(
-    `SELECT r.id, r.name, r.cart, l.tax_rate, l.name AS location_name, l.business_id, b.name AS business_name,
+    `SELECT r.id, r.name, r.cart, r.location_id, l.tax_rate, l.name AS location_name, l.business_id, b.name AS business_name,
             b.accent_color
        FROM registers r JOIN locations l ON l.id = r.location_id JOIN businesses b ON b.id = l.business_id
       WHERE r.pair_token = $1 AND r.active AND l.active AND b.active`, [String(t || '')]);
@@ -514,6 +564,11 @@ app.post('/api/pair/:token/custom', wrap(async (req, res) => {
   const item = customItem(req.body);
   const out = await mutateCart(r.id, r.business_id, async (cart) => { cart.push(item); return { event: { kind: 'added', name: item.name } }; }, 'phone');
   res.json({ item, ...phoneView(out) });
+}));
+app.post('/api/pair/:token/pending', wrap(async (req, res) => {
+  const r = await registerByPair(req.params.token);
+  const out = await reportPending(r, req.body, `Phone scanner · ${r.location_name} · ${r.name}`, 'phone');
+  res.json({ pending_id: out.pending_id, item: out.item, cart: out.cart, totals: out.totals });
 }));
 app.post('/api/pair/:token/remove', wrap(async (req, res) => {
   const r = await registerByPair(req.params.token);
@@ -603,6 +658,73 @@ app.put('/api/products/:id', ...managers, wrap(async (req, res) => {
        stock_qty=$7, active=$8 WHERE id=$9 AND business_id=$10`,
     [...f, req.params.id, req.user.business_id]).catch(duplicateBarcode);
   if (!r.rowCount) fail(404, 'Product not found');
+  res.json({ ok: true });
+}));
+
+// ---------- pending items (not in Products yet) ----------
+app.get('/api/pending', ...managers, wrap(async (req, res) => {
+  const status = ['pending', 'approved', 'dismissed'].includes(req.query.status) ? req.query.status : 'pending';
+  const { rows } = await pool.query(
+    `SELECT p.id, p.barcode, p.name, p.price_cents, p.note, p.reported_by, p.times_seen, p.status, p.product_id,
+            p.created_at, p.updated_at, p.resolved_at, (p.image IS NOT NULL) AS has_image,
+            floor(extract(epoch FROM p.updated_at))::bigint AS image_version,
+            l.name AS location_name, u.name AS resolved_by_name,
+            (SELECT pr.name FROM products pr WHERE pr.business_id = p.business_id AND p.barcode IS NOT NULL
+               AND pr.barcode = p.barcode LIMIT 1) AS existing_product
+       FROM pending_items p LEFT JOIN locations l ON l.id = p.location_id LEFT JOIN users u ON u.id = p.resolved_by
+      WHERE p.business_id = $1 AND p.status = $2
+      ORDER BY ${status === 'pending' ? 'p.updated_at DESC' : 'p.resolved_at DESC'} LIMIT 300`,
+    [req.user.business_id, status]);
+  const c = await pool.query(`SELECT count(*)::int AS n FROM pending_items WHERE business_id=$1 AND status='pending'`,
+    [req.user.business_id]);
+  res.json({ items: rows, pending_count: c.rows[0].n });
+}));
+app.get('/api/pending/count', ...managers, wrap(async (req, res) => {
+  const c = await pool.query(`SELECT count(*)::int AS n FROM pending_items WHERE business_id=$1 AND status='pending'`,
+    [req.user.business_id]);
+  res.json({ pending_count: c.rows[0].n });
+}));
+app.get('/api/pending/:id/image', ...managers, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT image, image_type FROM pending_items WHERE id=$1 AND business_id=$2 AND image IS NOT NULL',
+    [req.params.id, req.user.business_id]);
+  if (!rows[0]) return res.status(404).end();
+  res.set({ 'Content-Type': rows[0].image_type, 'Cache-Control': 'private, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff' });
+  res.send(rows[0].image);
+}));
+// Turns a pending item into a real product with the approved price.
+// Body: product fields + photo ("data:..." new photo, "remove", or empty to keep the reported photo).
+app.post('/api/pending/:id/approve', ...managers, wrap(async (req, res) => {
+  const f = productFields(req.body);
+  const newPhoto = req.body.photo && req.body.photo !== 'remove' ? photoFromBody(req.body.photo) : null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const p = await client.query(`SELECT * FROM pending_items WHERE id=$1 AND business_id=$2 FOR UPDATE`,
+      [req.params.id, req.user.business_id]);
+    const pend = p.rows[0] || fail(404, 'Pending item not found');
+    if (pend.status !== 'pending') fail(400, 'This item was already handled');
+    const keepReported = !newPhoto && req.body.photo !== 'remove' && pend.image;
+    const img = newPhoto ? newPhoto.bytes : keepReported ? pend.image : null;
+    const imgType = newPhoto ? newPhoto.type : keepReported ? pend.image_type : null;
+    const r = await client.query(
+      `INSERT INTO products (business_id, barcode, name, category, price_cents, taxable, track_stock, stock_qty, active,
+         image, image_type, image_updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, CASE WHEN $10::bytea IS NULL THEN NULL ELSE now() END) RETURNING id`,
+      [req.user.business_id, ...f, img, imgType]).catch(duplicateBarcode);
+    await client.query(
+      `UPDATE pending_items SET status='approved', product_id=$1, resolved_by=$2, resolved_at=now() WHERE id=$3`,
+      [r.rows[0].id, req.user.id, pend.id]);
+    await client.query('COMMIT');
+    res.json({ product_id: r.rows[0].id });
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+}));
+app.post('/api/pending/:id/dismiss', ...managers, wrap(async (req, res) => {
+  const r = await pool.query(
+    `UPDATE pending_items SET status='dismissed', resolved_by=$1, resolved_at=now()
+      WHERE id=$2 AND business_id=$3 AND status='pending'`, [req.user.id, req.params.id, req.user.business_id]);
+  if (!r.rowCount) fail(404, 'Pending item not found');
   res.json({ ok: true });
 }));
 
