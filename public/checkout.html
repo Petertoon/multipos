@@ -102,6 +102,7 @@
         <button class="ghost" onclick="newPair()">New code</button>
       </div>
     </div>
+    <div id="waBox"></div>
   </div>
 </div>
 
@@ -400,6 +401,7 @@ async function newPair() {
   await api(`/api/registers/${registerId}/new-pair`, {});
 }
 
+mountWhatsAppBox($('#waBox'));
 start().catch((e) => toast(e.message, 'bad'));
 </script>
 </body>
