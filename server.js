@@ -166,7 +166,7 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
@@ -225,7 +225,9 @@ app.post('/api/admin/businesses', requireLogin, requireAdmin, wrap(async (req, r
 }));
 
 app.put('/api/admin/businesses/:id', requireLogin, requireAdmin, wrap(async (req, res) => {
-  await pool.query('UPDATE businesses SET active = $1 WHERE id = $2', [!!req.body.active, req.params.id]);
+  // Only the fields sent are changed: { active } and/or { rentals_enabled }.
+  if ('active' in req.body) await pool.query('UPDATE businesses SET active = $1 WHERE id = $2', [!!req.body.active, req.params.id]);
+  if ('rentals_enabled' in req.body) await pool.query('UPDATE businesses SET rentals_enabled = $1 WHERE id = $2', [!!req.body.rentals_enabled, req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -253,6 +255,11 @@ app.put('/api/business', ...biz, requireRole('owner'), wrap(async (req, res) => 
   if (logo && !/^https:\/\//.test(logo)) fail(400, 'Logo URL must start with https://');
   await pool.query('UPDATE businesses SET name=$1, accent_color=$2, logo_url=$3 WHERE id=$4',
     [name, color, logo || null, req.user.business_id]);
+  if (req.body.half_day_hours != null && req.body.half_day_hours !== '') {
+    const h = parseInt(req.body.half_day_hours, 10);
+    if (!(h >= 1 && h <= 12)) fail(400, 'Half day must be 1 to 12 hours');
+    await pool.query('UPDATE businesses SET half_day_hours=$1 WHERE id=$2', [h, req.user.business_id]);
+  }
   res.json({ ok: true });
 }));
 
@@ -373,7 +380,7 @@ async function mutateCart(registerId, businessId, fn, source) {
 }
 // Product columns without the photo bytes (never load photos in lists).
 const PRODUCT_COLS = `id, business_id, barcode, name, category, price_cents, taxable, track_stock, stock_qty,
-  active, created_at, (image IS NOT NULL) AS has_image,
+  active, created_at, is_rental, rate_half_day, rate_day, rate_week, rate_month, rental_units, (image IS NOT NULL) AS has_image,
   CASE WHEN image IS NOT NULL THEN floor(extract(epoch FROM image_updated_at))::bigint END AS image_version`;
 function addProductToCart(cart, p, qty = 1) {
   const existing = cart.find((it) => it.product_id === p.id);
@@ -389,6 +396,8 @@ async function scanIntoCart(registerId, businessId, code, source) {
       `SELECT ${PRODUCT_COLS} FROM products WHERE business_id = $1 AND active AND barcode = ANY($2) LIMIT 1`,
       [businessId, barcodeVariants(code)]);
     if (!rows[0]) return { found: false, code, event: { kind: 'not-found', code } };
+    // Rental items are rented with the Rent button (customer + period), not sold by scanning.
+    if (rows[0].is_rental) return { found: false, rental: { id: rows[0].id, name: rows[0].name }, code, event: { kind: 'rental', code } };
     const item = addProductToCart(cart, rows[0]);
     return { found: true, item, event: { kind: 'added', name: rows[0].name } };
   }, source);
@@ -464,6 +473,7 @@ app.post('/api/registers/:id/cart/product', ...biz, wrap(async (req, res) => {
     const { rows } = await client.query(`SELECT ${PRODUCT_COLS} FROM products WHERE id=$1 AND business_id=$2 AND active`,
       [req.body.product_id, req.user.business_id]);
     if (!rows[0]) fail(404, 'Product not found');
+    if (rows[0].is_rental) fail(400, 'This is a rental item. Use Rent.');
     addProductToCart(cart, rows[0]);
   }, 'register'));
 }));
@@ -476,6 +486,70 @@ app.post('/api/registers/:id/cart/pending', ...biz, wrap(async (req, res) => {
   const out = await reportPending(reg, req.body, `${req.user.name} · ${reg.location_name} · ${reg.name}`, 'register');
   res.json({ pending_id: out.pending_id, item: out.item, cart: out.cart, totals: out.totals });
 }));
+// ---------- rentals: add a prepaid rental to the cart ----------
+const PERIODS = { half_day: 'Half day', day: 'Day', week: 'Week', month: 'Month' };
+function rentalDue(start, period, count, halfDayHours) {
+  const d = new Date(start);
+  if (period === 'half_day') d.setHours(d.getHours() + halfDayHours);
+  else if (period === 'day') d.setDate(d.getDate() + count);
+  else if (period === 'week') d.setDate(d.getDate() + 7 * count);
+  else d.setMonth(d.getMonth() + count);
+  return d;
+}
+function periodText(period, count) {
+  if (period === 'half_day') return 'Half day';
+  const unit = { day: 'day', week: 'week', month: 'month' }[period];
+  return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+async function rentalsOn(businessId) {
+  const b = await pool.query('SELECT rentals_enabled, half_day_hours FROM businesses WHERE id=$1', [businessId]);
+  if (!b.rows[0] || !b.rows[0].rentals_enabled) fail(403, 'Rentals are not turned on for this business');
+  return b.rows[0];
+}
+// How many units of a rental item are out right now.
+async function unitsOut(productId) {
+  const r = await pool.query(`SELECT COALESCE(sum(qty),0)::int AS n FROM rentals WHERE product_id=$1 AND status='out'`, [productId]);
+  return r.rows[0].n;
+}
+app.get('/api/rental-items', ...biz, wrap(async (req, res) => {
+  const bset = await rentalsOn(req.user.business_id);
+  const { rows } = await pool.query(
+    `SELECT ${PRODUCT_COLS}, (SELECT COALESCE(sum(qty),0)::int FROM rentals r WHERE r.product_id = products.id AND r.status='out') AS units_out
+       FROM products WHERE business_id=$1 AND is_rental AND active ORDER BY name`, [req.user.business_id]);
+  res.json({ items: rows, half_day_hours: bset.half_day_hours });
+}));
+app.post('/api/registers/:id/cart/rental', ...biz, wrap(async (req, res) => {
+  const bset = await rentalsOn(req.user.business_id);
+  const period = PERIODS[req.body.period] ? req.body.period : fail(400, 'Choose a rental period');
+  const count = period === 'half_day' ? 1 : Math.max(1, Math.min(365, parseInt(req.body.count, 10) || 1));
+  const qty = Math.max(1, Math.min(99, parseInt(req.body.qty, 10) || 1));
+  const customerName = text(req.body.customer_name, 'Customer name', { max: 100 });
+  const customerPhone = text(req.body.customer_phone, 'Customer phone', { max: 40 });
+  const p = await pool.query(`SELECT ${PRODUCT_COLS} FROM products WHERE id=$1 AND business_id=$2 AND is_rental AND active`,
+    [req.body.product_id, req.user.business_id]);
+  const prod = p.rows[0] || fail(404, 'Rental item not found');
+  const rate = prod['rate_' + period];
+  if (rate == null) fail(400, `${prod.name} has no ${PERIODS[period].toLowerCase()} rate`);
+  const available = prod.rental_units - (await unitsOut(prod.id));
+  if (qty > available) fail(400, available > 0 ? `Only ${available} available right now` : `All ${prod.name} units are rented out`);
+  const now = new Date();
+  let due = rentalDue(now, period, count, bset.half_day_hours);
+  if (req.body.due_at) {
+    const d = new Date(req.body.due_at);
+    if (isNaN(d) || d <= now) fail(400, 'Due back time must be in the future');
+    due = d;
+  }
+  const item = {
+    key: token(6), product_id: null, barcode: prod.barcode, taxable: prod.taxable, qty,
+    name: `Rental: ${prod.name} · ${periodText(period, count)}`,
+    unit_cents: rate * count,
+    rental: { product_id: prod.id, period, count, due_at: due.toISOString(), customer_name: customerName, customer_phone: customerPhone,
+      item_name: prod.name },
+    img: prod.image_version ? Number(prod.image_version) : null, rental_product_id: prod.id,
+  };
+  res.json(await mutateCart(req.params.id, req.user.business_id, async (cart) => { cart.push(item); }, 'register'));
+}));
+
 app.post('/api/registers/:id/cart/qty', ...biz, wrap(async (req, res) => {
   const qty = parseInt(req.body.qty, 10);
   res.json(await mutateCart(req.params.id, req.user.business_id, async (cart) => {
@@ -495,8 +569,50 @@ app.post('/api/registers/:id/cart/clear', ...biz, wrap(async (req, res) => {
 }));
 
 // ---------- complete sale ----------
+// Gift card numbers are printed like "GC-7K3M-9QX2"; typing is forgiving about dashes, spaces and case.
+function normalizeGiftCode(v) {
+  const s = String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!s) return null;
+  const core = s.startsWith('GC') ? s.slice(2) : s;
+  return core.length === 8 ? `GC-${core.slice(0, 4)}-${core.slice(4)}` : null;
+}
+function newGiftCode() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I/L mix-ups
+  let s = '';
+  for (const b of crypto.randomBytes(8)) s += chars[b % chars.length];
+  return `GC-${s.slice(0, 4)}-${s.slice(4)}`;
+}
+
+// Checks the payments add up to the total exactly. Body is either
+//   { payments: [{ method, amount_cents, tendered_cents? }, ...] }   (split pay)
+// or the older single form { payment_method, tendered_cents? }.
+function checkPayments(body, total) {
+  let list = Array.isArray(body.payments) ? body.payments
+    : [{ method: body.payment_method, amount_cents: total, tendered_cents: body.tendered_cents }];
+  if (!list.length) fail(400, 'Add a payment');
+  if (list.length > 10) fail(400, 'Too many payments (10 max)');
+  list = list.map((p) => {
+    const method = ['cash', 'card', 'other', 'gift_card'].includes(p.method) ? p.method : fail(400, 'Choose a payment method');
+    const amount = cents(p.amount_cents, 'Payment amount');
+    if (amount <= 0) fail(400, 'Each payment must be more than $0.00');
+    const giftCode = method === 'gift_card' ? normalizeGiftCode(p.gift_code) : null;
+    if (method === 'gift_card' && !giftCode) fail(400, 'Enter the gift card number');
+    let tendered = null, change = null;
+    if (method === 'cash') {
+      tendered = p.tendered_cents == null || p.tendered_cents === '' ? amount : cents(p.tendered_cents, 'Cash received');
+      if (tendered < amount) fail(400, 'Cash received is less than the cash payment');
+      change = tendered - amount;
+    }
+    return { method, amount, tendered, change, giftCode, giftCardId: null };
+  });
+  const paid = list.reduce((a, p) => a + p.amount, 0);
+  if (paid !== total) fail(400, paid < total
+    ? `Payments are $${((total - paid) / 100).toFixed(2)} short of the total`
+    : `Payments are $${((paid - total) / 100).toFixed(2)} more than the total`);
+  return list;
+}
+
 app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
-  const method = ['cash', 'card', 'other'].includes(req.body.payment_method) ? req.body.payment_method : fail(400, 'Choose a payment method');
   const client = await pool.connect();
   let saleId;
   try {
@@ -507,12 +623,12 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
     const reg = rows[0] || fail(404, 'Register not found');
     if (!reg.cart.length) fail(400, 'The cart is empty');
     const t = computeTotals(reg.cart, reg.tax_rate);
-    let tendered = null, change = null;
-    if (method === 'cash') {
-      tendered = req.body.tendered_cents == null || req.body.tendered_cents === '' ? t.total_cents : cents(req.body.tendered_cents, 'Cash received');
-      if (tendered < t.total_cents) fail(400, 'Cash received is less than the total');
-      change = tendered - t.total_cents;
-    }
+    const payments = t.total_cents > 0 ? checkPayments(req.body, t.total_cents) : [];
+    const method = payments.length > 1 ? 'split' : (payments[0]?.method
+      || (['cash', 'card', 'other'].includes(req.body.payment_method) ? req.body.payment_method : 'cash'));
+    const cashParts = payments.filter((p) => p.method === 'cash');
+    const tendered = cashParts.length ? cashParts.reduce((a, p) => a + p.tendered, 0) : null;
+    const change = cashParts.length ? cashParts.reduce((a, p) => a + p.change, 0) : null;
     const s = await client.query(
       `INSERT INTO sales (business_id, location_id, register_id, user_id, subtotal_cents, tax_cents, total_cents,
          tax_rate, payment_method, tendered_cents, change_cents, receipt_token)
@@ -520,6 +636,28 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
       [req.user.business_id, reg.location_id, reg.id, req.user.id, t.subtotal_cents, t.tax_cents, t.total_cents,
         reg.tax_rate, method, tendered, change, token(16)]);
     saleId = s.rows[0].id;
+    for (const p of payments) {
+      if (p.method === 'gift_card') {
+        const g = await client.query('SELECT id, balance_cents FROM gift_cards WHERE business_id=$1 AND code=$2 FOR UPDATE',
+          [req.user.business_id, p.giftCode]);
+        if (!g.rows[0]) fail(400, `Gift card ${p.giftCode} was not found`);
+        if (g.rows[0].balance_cents < p.amount) fail(400, `Gift card ${p.giftCode} only has $${(g.rows[0].balance_cents / 100).toFixed(2)} left`);
+        await client.query('UPDATE gift_cards SET balance_cents = balance_cents - $1 WHERE id = $2', [p.amount, g.rows[0].id]);
+        p.giftCardId = g.rows[0].id;
+      }
+      await client.query(
+        `INSERT INTO sale_payments (sale_id, method, amount_cents, tendered_cents, change_cents, gift_card_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [saleId, p.method, p.amount, p.tendered, p.change, p.giftCardId]);
+    }
+    // Prepaid rentals in this sale go on the "Rentals out" list.
+    for (const it of reg.cart.filter((x) => x.rental)) {
+      const r = it.rental;
+      await client.query(
+        `INSERT INTO rentals (business_id, location_id, sale_id, product_id, item_name, qty, period, period_count, paid_cents,
+           customer_name, customer_phone, due_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [req.user.business_id, reg.location_id, saleId, r.product_id, r.item_name, it.qty, r.period, r.count,
+          it.unit_cents * it.qty, r.customer_name, r.customer_phone, r.due_at]);
+    }
     for (const it of reg.cart) {
       await client.query(
         `INSERT INTO sale_items (sale_id, product_id, barcode, name, qty, unit_cents, taxable, line_cents)
@@ -534,7 +672,8 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
     await client.query('COMMIT');
     broadcast(reg.id, { type: 'cart', cart: [], totals: computeTotals([], reg.tax_rate), source: 'register',
       event: { kind: 'sale', sale_id: saleId } });
-    res.json({ sale_id: saleId, ...t, tendered_cents: tendered, change_cents: change });
+    res.json({ sale_id: saleId, ...t, payment_method: method, tendered_cents: tendered, change_cents: change,
+      payments: payments.map((p) => ({ method: p.method, amount_cents: p.amount, tendered_cents: p.tendered, change_cents: p.change })) });
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
@@ -628,18 +767,28 @@ app.delete('/api/products/:id/image', ...managers, wrap(async (req, res) => {
   if (!r.rowCount) fail(404, 'Product not found');
   res.json({ ok: true });
 }));
+const optCents = (v, label) => (v == null || v === '' ? null : cents(v, label));
+// Order matches the column lists in PRODUCT_INSERT_COLS below.
 function productFields(body) {
+  const isRental = !!body.is_rental;
+  const rates = [optCents(body.rate_half_day, 'Half day rate'), optCents(body.rate_day, 'Day rate'),
+    optCents(body.rate_week, 'Week rate'), optCents(body.rate_month, 'Month rate')];
+  if (isRental && rates.every((r) => r == null)) fail(400, 'Enter at least one rental rate');
   return [
     text(body.barcode, 'Barcode', { required: false, max: 64 }) || null,
     text(body.name, 'Product name', { max: 150 }),
     text(body.category, 'Category', { required: false, max: 60 }) || null,
-    cents(body.price_cents, 'Price'),
+    isRental && (body.price_cents == null || body.price_cents === '') ? 0 : cents(body.price_cents, 'Price'),
     body.taxable !== false,
     !!body.track_stock,
     Math.round(Number(body.stock_qty) || 0),
     body.active !== false,
+    isRental, ...rates,
+    Math.max(1, Math.min(9999, parseInt(body.rental_units, 10) || 1)),
   ];
 }
+const PRODUCT_INSERT_COLS = `barcode, name, category, price_cents, taxable, track_stock, stock_qty, active,
+  is_rental, rate_half_day, rate_day, rate_week, rate_month, rental_units`;
 function duplicateBarcode(e) {
   if (e.code === '23505') throw new HttpError(400, 'Another product already uses that barcode');
   throw e;
@@ -647,18 +796,136 @@ function duplicateBarcode(e) {
 app.post('/api/products', ...managers, wrap(async (req, res) => {
   const f = productFields(req.body);
   const r = await pool.query(
-    `INSERT INTO products (business_id, barcode, name, category, price_cents, taxable, track_stock, stock_qty, active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [req.user.business_id, ...f]).catch(duplicateBarcode);
+    `INSERT INTO products (business_id, ${PRODUCT_INSERT_COLS})
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`, [req.user.business_id, ...f]).catch(duplicateBarcode);
   res.json({ id: r.rows[0].id });
 }));
 app.put('/api/products/:id', ...managers, wrap(async (req, res) => {
   const f = productFields(req.body);
   const r = await pool.query(
     `UPDATE products SET barcode=$1, name=$2, category=$3, price_cents=$4, taxable=$5, track_stock=$6,
-       stock_qty=$7, active=$8 WHERE id=$9 AND business_id=$10`,
+       stock_qty=$7, active=$8, is_rental=$9, rate_half_day=$10, rate_day=$11, rate_week=$12, rate_month=$13,
+       rental_units=$14 WHERE id=$15 AND business_id=$16`,
     [...f, req.params.id, req.user.business_id]).catch(duplicateBarcode);
   if (!r.rowCount) fail(404, 'Product not found');
   res.json({ ok: true });
+}));
+
+// ---------- rentals out / returns ----------
+app.get('/api/rentals', ...biz, wrap(async (req, res) => {
+  await rentalsOn(req.user.business_id);
+  const status = req.query.status === 'returned' ? 'returned' : 'out';
+  const { rows } = await pool.query(
+    `SELECT r.*, (r.status = 'out' AND r.due_at < now()) AS overdue, l.name AS location_name, u.name AS returned_by_name,
+            (SELECT json_agg(json_build_object('method', f.method, 'amount_cents', f.amount_cents, 'status', f.status))
+               FROM refunds f WHERE f.rental_id = r.id) AS refunds
+       FROM rentals r LEFT JOIN locations l ON l.id = r.location_id LEFT JOIN users u ON u.id = r.returned_by
+      WHERE r.business_id = $1 AND r.status = $2
+      ORDER BY ${status === 'out' ? 'r.due_at ASC' : 'r.returned_at DESC'} LIMIT 300`, [req.user.business_id, status]);
+  res.json({ rentals: rows, now: new Date().toISOString() });
+}));
+app.get('/api/rentals/count', ...biz, wrap(async (req, res) => {
+  const r = await pool.query(
+    `SELECT count(*)::int AS out, count(*) FILTER (WHERE due_at < now())::int AS overdue
+       FROM rentals WHERE business_id=$1 AND status='out'`, [req.user.business_id]);
+  res.json(r.rows[0]);
+}));
+// Check a rental back in. Late: optional custom charge goes onto the register's current sale.
+// Early: optional refund as cash (from the drawer), a gift card, or a check owed (ledger).
+app.post('/api/rentals/:id/return', ...biz, wrap(async (req, res) => {
+  await rentalsOn(req.user.business_id);
+  const late = optCents(req.body.late_charge_cents, 'Late charge') || 0;
+  const refundAmt = optCents(req.body.refund_cents, 'Refund') || 0;
+  if (late && refundAmt) fail(400, 'Use either a late charge or a refund, not both');
+  const method = refundAmt ? (['cash', 'gift_card', 'check'].includes(req.body.refund_method) ? req.body.refund_method : fail(400, 'Choose how to refund')) : null;
+  const note = text(req.body.note, 'Note', { required: false, max: 300 }) || null;
+  const address = text(req.body.mailing_address, 'Mailing address', { required: false, max: 300 }) || null;
+  if (method === 'check' && !address) fail(400, 'Enter the mailing address for the check');
+  let reg = null;
+  if (late || method === 'cash') reg = await getRegister(req.body.register_id, req.user.business_id);
+
+  const client = await pool.connect();
+  let gift = null, refundId = null, rental;
+  try {
+    await client.query('BEGIN');
+    const r = await client.query('SELECT * FROM rentals WHERE id=$1 AND business_id=$2 FOR UPDATE', [req.params.id, req.user.business_id]);
+    rental = r.rows[0] || fail(404, 'Rental not found');
+    if (rental.status !== 'out') fail(400, 'This rental was already checked in');
+    if (refundAmt > rental.paid_cents) fail(400, `Refund can't be more than the $${(rental.paid_cents / 100).toFixed(2)} paid`);
+    await client.query(
+      `UPDATE rentals SET status='returned', returned_at=now(), returned_by=$1, late_charge_cents=$2, refund_cents=$3, return_note=$4 WHERE id=$5`,
+      [req.user.id, late || null, refundAmt || null, note, rental.id]);
+    if (refundAmt) {
+      let giftId = null;
+      if (method === 'gift_card') {
+        for (let tries = 0; !gift && tries < 5; tries++) {
+          const code = newGiftCode();
+          const g = await client.query(
+            `INSERT INTO gift_cards (business_id, code, initial_cents, balance_cents, customer_name, customer_phone, source, created_by)
+             VALUES ($1,$2,$3,$3,$4,$5,$6,$7) ON CONFLICT (code) DO NOTHING RETURNING id, code, balance_cents`,
+            [req.user.business_id, code, refundAmt, rental.customer_name, rental.customer_phone,
+              `Rental refund #${rental.id}`, req.user.id]);
+          gift = g.rows[0] || null;
+        }
+        if (!gift) fail(500, 'Could not create a gift card number, try again');
+        giftId = gift.id;
+      }
+      const f = await client.query(
+        `INSERT INTO refunds (business_id, location_id, register_id, rental_id, amount_cents, method, gift_card_id,
+           customer_name, customer_phone, mailing_address, note, status, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+        [req.user.business_id, reg ? reg.location_id : rental.location_id, reg ? reg.id : null, rental.id, refundAmt, method, giftId,
+          rental.customer_name, rental.customer_phone, address, note, method === 'check' ? 'owed' : 'done', req.user.id]);
+      refundId = f.rows[0].id;
+    }
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+
+  let cartOut = {};
+  if (late) {
+    const p = rental.product_id ? await pool.query('SELECT taxable FROM products WHERE id=$1', [rental.product_id]) : { rows: [] };
+    const item = { key: token(6), product_id: null, barcode: null, qty: 1, unit_cents: late,
+      taxable: p.rows[0] ? p.rows[0].taxable : true,
+      name: `Late charge: ${rental.item_name} (rental #${rental.id})` };
+    cartOut = await mutateCart(reg.id, req.user.business_id, async (cart) => { cart.push(item); return { event: { kind: 'added', name: item.name } }; }, 'register');
+  }
+  res.json({ ok: true, refund_id: refundId, refund_method: method, refund_cents: refundAmt || 0,
+    gift_card: gift ? { code: gift.code, balance_cents: gift.balance_cents } : null,
+    late_charge_cents: late || 0, cart: cartOut.cart, totals: cartOut.totals });
+}));
+
+// ---------- refunds owed (checks to mail) ----------
+app.get('/api/refunds', ...managers, wrap(async (req, res) => {
+  const status = ['owed', 'paid', 'done'].includes(req.query.status) ? req.query.status : 'owed';
+  const { rows } = await pool.query(
+    `SELECT f.*, l.name AS location_name, u.name AS created_by_name, pu.name AS paid_by_name, g.code AS gift_code,
+            r.item_name AS rental_item
+       FROM refunds f LEFT JOIN locations l ON l.id = f.location_id LEFT JOIN users u ON u.id = f.created_by
+       LEFT JOIN users pu ON pu.id = f.paid_by LEFT JOIN gift_cards g ON g.id = f.gift_card_id
+       LEFT JOIN rentals r ON r.id = f.rental_id
+      WHERE f.business_id=$1 AND f.status=$2 ORDER BY f.created_at DESC LIMIT 300`, [req.user.business_id, status]);
+  const c = await pool.query(`SELECT count(*)::int AS n, COALESCE(sum(amount_cents),0)::int AS total FROM refunds WHERE business_id=$1 AND status='owed'`,
+    [req.user.business_id]);
+  res.json({ refunds: rows, owed: c.rows[0] });
+}));
+app.post('/api/refunds/:id/paid', ...managers, wrap(async (req, res) => {
+  const num = text(req.body.check_number, 'Check number', { required: false, max: 40 }) || null;
+  const r = await pool.query(
+    `UPDATE refunds SET status='paid', check_number=$1, paid_at=now(), paid_by=$2 WHERE id=$3 AND business_id=$4 AND status='owed'`,
+    [num, req.user.id, req.params.id, req.user.business_id]);
+  if (!r.rowCount) fail(404, 'Refund not found');
+  res.json({ ok: true });
+}));
+
+// ---------- gift cards ----------
+app.get('/api/gift-cards/:code', ...biz, wrap(async (req, res) => {
+  const code = normalizeGiftCode(req.params.code) || fail(404, 'Gift card not found');
+  const g = await pool.query(
+    `SELECT g.code, g.initial_cents, g.balance_cents, g.customer_name, g.created_at, b.name AS business_name
+       FROM gift_cards g JOIN businesses b ON b.id = g.business_id WHERE g.business_id=$1 AND g.code=$2`,
+    [req.user.business_id, code]);
+  if (!g.rows[0]) fail(404, 'Gift card not found');
+  res.json(g.rows[0]);
 }));
 
 // ---------- pending items (not in Products yet) ----------
@@ -709,9 +976,8 @@ app.post('/api/pending/:id/approve', ...managers, wrap(async (req, res) => {
     const img = newPhoto ? newPhoto.bytes : keepReported ? pend.image : null;
     const imgType = newPhoto ? newPhoto.type : keepReported ? pend.image_type : null;
     const r = await client.query(
-      `INSERT INTO products (business_id, barcode, name, category, price_cents, taxable, track_stock, stock_qty, active,
-         image, image_type, image_updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, CASE WHEN $10::bytea IS NULL THEN NULL ELSE now() END) RETURNING id`,
+      `INSERT INTO products (business_id, ${PRODUCT_INSERT_COLS}, image, image_type, image_updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, CASE WHEN $16::bytea IS NULL THEN NULL ELSE now() END) RETURNING id`,
       [req.user.business_id, ...f, img, imgType]).catch(duplicateBarcode);
     await client.query(
       `UPDATE pending_items SET status='approved', product_id=$1, resolved_by=$2, resolved_at=now() WHERE id=$3`,
@@ -782,15 +1048,30 @@ app.get('/api/sales', ...managers, wrap(async (req, res) => {
   if (req.query.location_id) { params.push(req.query.location_id); where += ` AND s.location_id = $${params.length}`; }
   const list = await pool.query(
     `SELECT s.id, s.created_at, s.total_cents, s.tax_cents, s.subtotal_cents, s.payment_method, s.voided,
-            l.name AS location_name, r.name AS register_name, u.name AS cashier
+            l.name AS location_name, r.name AS register_name, u.name AS cashier,
+            (SELECT json_agg(json_build_object('method', p.method, 'amount_cents', p.amount_cents) ORDER BY p.id)
+               FROM sale_payments p WHERE p.sale_id = s.id) AS payments
        FROM sales s JOIN locations l ON l.id = s.location_id
        LEFT JOIN registers r ON r.id = s.register_id LEFT JOIN users u ON u.id = s.user_id
       WHERE ${where} ORDER BY s.created_at DESC LIMIT 500`, params);
+  const tot = await pool.query(
+    `SELECT count(*)::int AS n, COALESCE(sum(s.total_cents),0)::bigint AS total, COALESCE(sum(s.tax_cents),0)::bigint AS tax
+       FROM sales s WHERE ${where} AND NOT s.voided`, params);
+  // Money by payment type comes from the individual payments, so split sales count in each type.
   const sum = await pool.query(
-    `SELECT s.payment_method, count(*)::int AS n, sum(s.total_cents)::bigint AS total,
-            sum(s.tax_cents)::bigint AS tax, sum(s.subtotal_cents)::bigint AS subtotal
-       FROM sales s WHERE ${where} AND NOT s.voided GROUP BY s.payment_method`, params);
-  res.json({ sales: list.rows, summary: sum.rows.map((r) => ({ ...r, total: Number(r.total), tax: Number(r.tax), subtotal: Number(r.subtotal) })) });
+    `SELECT p.method AS payment_method, count(DISTINCT s.id)::int AS n, sum(p.amount_cents)::bigint AS total
+       FROM sales s JOIN sale_payments p ON p.sale_id = s.id
+      WHERE ${where} AND NOT s.voided GROUP BY p.method`, params);
+  // Rental refunds in the same period (cash ones come out of the drawer).
+  const rp = [req.user.business_id, params[1], params[2], params[3]];
+  let rwhere = `f.business_id = $1 AND (f.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`;
+  if (req.query.location_id) { rp.push(req.query.location_id); rwhere += ` AND f.location_id = $${rp.length}`; }
+  const ref = await pool.query(
+    `SELECT f.method, count(*)::int AS n, sum(f.amount_cents)::bigint AS total FROM refunds f WHERE ${rwhere} GROUP BY f.method`, rp);
+  res.json({ sales: list.rows,
+    refunds: ref.rows.map((r) => ({ ...r, total: Number(r.total) })),
+    totals: { n: tot.rows[0].n, total: Number(tot.rows[0].total), tax: Number(tot.rows[0].tax) },
+    summary: sum.rows.map((r) => ({ ...r, total: Number(r.total) })) });
 }));
 const SALE_SELECT = `SELECT s.*, l.name AS location_name, l.address AS location_address, l.phone AS location_phone,
             b.name AS business_name, b.logo_url, u.name AS cashier, r.name AS register_name
@@ -798,7 +1079,9 @@ const SALE_SELECT = `SELECT s.*, l.name AS location_name, l.address AS location_
        LEFT JOIN users u ON u.id = s.user_id LEFT JOIN registers r ON r.id = s.register_id`;
 async function saleWithItems(sale) {
   const items = await pool.query('SELECT name, barcode, qty, unit_cents, taxable, line_cents FROM sale_items WHERE sale_id = $1 ORDER BY id', [sale.id]);
-  return { ...sale, items: items.rows };
+  const pays = await pool.query('SELECT method, amount_cents, tendered_cents, change_cents FROM sale_payments WHERE sale_id = $1 ORDER BY id', [sale.id]);
+  const rents = await pool.query('SELECT id, item_name, qty, due_at, customer_name FROM rentals WHERE sale_id = $1 ORDER BY id', [sale.id]);
+  return { ...sale, items: items.rows, payments: pays.rows, rentals: rents.rows };
 }
 app.get('/api/sales/:id', ...biz, wrap(async (req, res) => {
   const s = await pool.query(`${SALE_SELECT} WHERE s.id = $1 AND s.business_id = $2`, [req.params.id, req.user.business_id]);
@@ -828,7 +1111,7 @@ app.get('/api/receipt/:token', wrap(async (req, res) => {
   const sale = await saleWithItems(s.rows[0]);
   const keep = ['id', 'created_at', 'subtotal_cents', 'tax_cents', 'total_cents', 'tax_rate', 'payment_method',
     'tendered_cents', 'change_cents', 'voided', 'location_name', 'location_address', 'location_phone',
-    'business_name', 'logo_url', 'items'];
+    'business_name', 'logo_url', 'items', 'payments', 'rentals'];
   const out = Object.fromEntries(keep.map((k) => [k, sale[k]]));
   out.cashier = sale.cashier ? sale.cashier.split(' ')[0] : null; // first name only
   res.set('Cache-Control', 'no-store');
@@ -843,6 +1126,14 @@ app.post('/api/sales/:id/void', ...managers, wrap(async (req, res) => {
     if (!s.rows[0]) fail(404, 'Sale not found');
     if (s.rows[0].voided) fail(400, 'Sale is already voided');
     await client.query('UPDATE sales SET voided = TRUE WHERE id = $1', [req.params.id]);
+    // Gift card money spent on this sale goes back on the card.
+    await client.query(
+      `UPDATE gift_cards g SET balance_cents = g.balance_cents + p.amount_cents FROM sale_payments p
+        WHERE p.sale_id = $1 AND p.gift_card_id = g.id`, [req.params.id]);
+    // Rentals from this sale come off the "out" list.
+    await client.query(
+      `UPDATE rentals SET status='returned', returned_at=now(), returned_by=$2, return_note='Sale voided'
+        WHERE sale_id = $1 AND status = 'out'`, [req.params.id, req.user.id]);
     // Put tracked stock back.
     await client.query(
       `UPDATE products p SET stock_qty = p.stock_qty + si.qty FROM sale_items si
