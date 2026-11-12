@@ -23,6 +23,12 @@ button.primary { background: var(--accent); color: #fff; }
 button.danger { background: var(--danger); color: #fff; }
 button.ghost { background: transparent; border: 1px solid var(--line); }
 button.wa { background: #25d366; color: #fff; }
+.wabox { background: var(--panel); border-radius: var(--radius); padding: 12px 14px; }
+.wabox .wahead { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; font-size: 16px; }
+.wabox .walogo { font-size: 12px; }
+.wabox label.check { margin: 6px 0; font-size: 14px; }
+.wabox button { width: 100%; margin-top: 6px; }
+.wabox .wanote { font-size: 12px; margin-top: 6px; }
 input, select { padding: 10px 12px; border: 1px solid #cfd4cd; border-radius: 8px; background: #fff; width: 100%; color: var(--ink); }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0 4px; }
