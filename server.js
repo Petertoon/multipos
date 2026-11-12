@@ -166,7 +166,7 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
@@ -1552,6 +1552,9 @@ app.post('/api/sales/:id/void', ...managers, wrap(async (req, res) => {
     res.json({ ok: true });
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
+
+// ---------- QuickBooks Online (see qbo.js) ----------
+require('./qbo')(app, { pool, wrap, fail, text, requireLogin, requireBusiness, requireRole, requireAdmin, publicOrigin });
 
 // ---------- errors ----------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
