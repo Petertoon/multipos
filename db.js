@@ -104,6 +104,29 @@ CREATE INDEX IF NOT EXISTS sales_business_date ON sales(business_id, created_at)
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_token TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sales_receipt_token ON sales(receipt_token) WHERE receipt_token IS NOT NULL;
 
+-- Items scanned at the register that aren't in Products yet, waiting for management.
+CREATE TABLE IF NOT EXISTS pending_items (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  location_id INT REFERENCES locations(id) ON DELETE SET NULL,
+  register_id INT REFERENCES registers(id) ON DELETE SET NULL,
+  barcode TEXT,
+  name TEXT NOT NULL,
+  price_cents INT,
+  note TEXT,
+  image BYTEA,
+  image_type TEXT,
+  reported_by TEXT,
+  times_seen INT NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','dismissed')),
+  product_id INT REFERENCES products(id) ON DELETE SET NULL,
+  resolved_by INT REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pending_items_business ON pending_items(business_id, status);
+
 CREATE TABLE IF NOT EXISTS sale_items (
   id SERIAL PRIMARY KEY,
   sale_id INT NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
