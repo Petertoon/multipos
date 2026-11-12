@@ -27,6 +27,10 @@
   .thumb.none { display: flex; align-items: center; justify-content: center; color: #aab; font-size: 20px; }
   .photo-preview { width: 100%; max-height: 280px; object-fit: contain; background: #f4f5f3; border-radius: 10px; margin: 10px 0; }
   .photo-actions { display: grid; gap: 8px; }
+  .bar.filters { gap: 6px; } .bar.filters button { padding: 7px 10px; font-size: 14px; }
+  tr.totrow td { font-weight: 800; background: #fafbf9; }
+  h3 { margin: 18px 0 8px; }
+  @media print { .topbar, .bar button, .bar select, .bar input, #actingBanner { display: none !important; } body { background: #fff; } }
   .formhead { font-weight: 800; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
   .rentpill { background: #fff3e0; color: #8a4b00; }
   button.rentson { background: #fff3e0; color: #8a4b00; }
@@ -85,6 +89,9 @@ const TABS = [
   { id: 'products', label: 'Products', show: () => !!me.business },
   { id: 'pending', label: 'Pending items', show: () => !!me.business },
   { id: 'refunds', label: 'Refunds owed', show: () => !!(me.business && me.business.rentals_enabled) },
+  { id: 'customers', label: 'Customers', show: () => !!me.business },
+  { id: 'reports', label: 'Reports', show: () => !!me.business },
+  { id: 'deposits', label: 'Deposits', show: () => !!me.business },
   { id: 'locations', label: 'Locations', show: () => !!me.business },
   { id: 'employees', label: 'Employees', show: () => !!me.business },
   { id: 'sales', label: 'Sales', show: () => !!me.business },
@@ -358,6 +365,223 @@ function setPendingBadge(n) {
   if (a) a.innerHTML = 'Pending items' + (n ? ` <span class="badge">${n}</span>` : '');
 }
 
+// ---------- customers & charge accounts ----------
+const CUSTOMER_FORM = [
+  { name: 'name', label: 'Name', required: true },
+  { name: 'company', label: 'Company' },
+  { name: 'phone', label: 'Phone' },
+  { name: 'email', label: 'Email', type: 'email' },
+  { name: 'address', label: 'Address (statements are mailed here)' },
+  { name: 'notes', label: 'Notes' },
+  { type: 'heading', name: '_acct', label: 'Charge account', hint: 'Lets this customer put purchases on their account and pay later.' },
+  { name: 'charge_account', label: 'Has a charge account', type: 'check' },
+  { name: 'credit_limit_cents', label: 'Credit limit (blank = no limit)', type: 'money' },
+  { name: 'active', label: 'Active', type: 'check' },
+];
+let custQuery = '', custAccountsOnly = false;
+async function showCustomers() {
+  const list = await api(`/api/customers?all=1&q=${encodeURIComponent(custQuery)}${custAccountsOnly ? '&accounts=1' : ''}`);
+  const owed = list.filter((c) => c.charge_account).reduce((a, c) => a + Math.max(0, c.balance_cents), 0);
+  $('#view').innerHTML = `<div class="bar"><h2>Customers</h2><input id="cq" placeholder="Search name, company or phone" value="${esc(custQuery)}">
+      <label class="check" style="margin:0"><input type="checkbox" id="cAcct" ${custAccountsOnly ? 'checked' : ''}> Charge accounts only</label>
+      <button class="primary" id="addCust">+ Add customer</button></div>
+    ${custAccountsOnly ? `<p class="muted" style="margin-top:0">Total owed on charge accounts: <b>${money(owed)}</b></p>` : ''}
+    <div class="tablewrap"><table class="list"><thead><tr><th>Customer</th><th>Phone</th><th>Address</th><th>Account</th><th class="num">Balance</th><th></th></tr></thead><tbody>
+    ${list.map((c) => `<tr class="${c.active ? '' : 'off'}"><td><b>${esc(c.name)}</b>${c.company ? `<div class="muted" style="font-size:12px">${esc(c.company)}</div>` : ''}</td>
+      <td>${esc(c.phone || '')}</td><td style="font-size:13px">${esc(c.address || '')}</td>
+      <td>${c.charge_account ? `<span class="pill rentpill">Charge account</span>${c.credit_limit_cents != null ? `<div class="muted" style="font-size:12px">Limit ${money(c.credit_limit_cents)}</div>` : ''}` : ''}</td>
+      <td class="num">${c.charge_account || c.balance_cents ? `<b>${money(c.balance_cents)}</b>` : ''}</td>
+      <td style="white-space:nowrap"><button class="primary" data-open="${c.id}">Open</button> <button data-edit="${c.id}">Edit</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">No customers yet.</td></tr>'}</tbody></table></div>`;
+  let t; $('#cq').oninput = () => { clearTimeout(t); t = setTimeout(() => { custQuery = $('#cq').value; showCustomers().then(() => { const q = $('#cq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
+  $('#cAcct').onchange = () => { custAccountsOnly = $('#cAcct').checked; showCustomers(); };
+  $('#addCust').onclick = async () => { if (await saveLoop('Add customer', CUSTOMER_FORM, { active: true }, (v) => api('/api/customers', v))) showCustomers(); };
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.edit) {
+      const c = list.find((x) => String(x.id) === b.dataset.edit);
+      if (await saveLoop('Edit ' + c.name, CUSTOMER_FORM, c, (v) => api('/api/customers/' + c.id, v, 'PUT'))) showCustomers();
+    }
+    if (b.dataset.open) showCustomer(b.dataset.open);
+  };
+}
+async function showCustomer(id) {
+  const c = await api('/api/customers/' + id);
+  const kinds = { charge: 'Charge', payment: 'Payment' };
+  $('#view').innerHTML = `<div class="bar"><button class="ghost" id="back">← Customers</button><h2>${esc(c.name)}${c.company ? ' · ' + esc(c.company) : ''}</h2>
+      ${c.charge_account ? '<button class="primary" id="takePay">Take payment</button><button id="stmt">Print statement</button>' : ''}<button id="editC">Edit</button></div>
+    <div class="cards">
+      <div class="stat"><div>Phone</div><b style="font-size:18px">${esc(c.phone || '—')}</b></div>
+      <div class="stat"><div>Address</div><div style="color:var(--ink)">${esc(c.address || '—')}</div></div>
+      ${c.charge_account ? `<div class="stat"><div>Balance owed</div><b>${money(c.balance_cents)}</b></div>
+        <div class="stat"><div>Credit limit</div><b>${c.credit_limit_cents == null ? 'None' : money(c.credit_limit_cents)}</b></div>` : '<div class="stat"><div>Charge account</div><b style="font-size:18px">No</b></div>'}
+    </div>
+    ${c.charge_account || c.activity.length ? `<h3>Account activity</h3><div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Charge</th><th class="num">Payment</th><th></th></tr></thead><tbody>
+      ${c.activity.map((a) => `<tr class="${a.voided ? 'off' : ''}"><td>${new Date(a.created_at).toLocaleString()}</td><td>${kinds[a.kind]}${a.voided ? ' <span class="pill off">Void</span>' : ''}</td>
+        <td>${a.kind === 'charge' ? `Sale #${a.ref_id}${a.po_number ? ' · PO ' + esc(a.po_number) : ''}${a.job_address ? `<div class="muted" style="font-size:12px">${esc(a.job_address)}</div>` : ''}`
+          : `${esc(PAY_NAMES[a.method] || a.method)}${a.check_number ? ' #' + esc(a.check_number) : ''}`}</td>
+        <td class="num">${a.kind === 'charge' ? money(a.amount_cents) : ''}</td><td class="num">${a.kind === 'payment' ? money(a.amount_cents) : ''}</td>
+        <td>${a.kind === 'charge' ? `<button data-receipt="${a.ref_id}">Receipt</button>` : !a.voided ? `<button data-voidpay="${a.ref_id}">Void</button>` : ''}</td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">No account activity yet.</td></tr>'}</tbody></table></div>` : ''}
+    <h3>Recent sales</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>PO</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
+      ${c.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.po_number || '')}</td><td>${esc(PAY_NAMES[s.payment_method] || s.payment_method)}</td>
+        <td class="num">${money(s.total_cents)}</td><td><button data-receipt="${s.id}">Receipt</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No sales yet.</td></tr>'}</tbody></table></div>
+    ${c.quotes.length ? `<h3>Quotes</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>PO</th><th>Status</th><th class="num">Total</th><th></th></tr></thead><tbody>
+      ${c.quotes.map((q) => `<tr><td>${q.id}</td><td>${new Date(q.created_at).toLocaleDateString()}</td><td>${esc(q.po_number || '')}</td><td>${esc(q.status)}</td>
+        <td class="num">${money(q.total_cents)}</td><td><button data-quote="${q.id}">Print</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  $('#back').onclick = () => showCustomers();
+  $('#editC').onclick = async () => { if (await saveLoop('Edit ' + c.name, CUSTOMER_FORM, c, (v) => api('/api/customers/' + c.id, v, 'PUT'))) showCustomer(id); };
+  if (c.charge_account) {
+    $('#stmt').onclick = () => window.open('/statement?id=' + c.id, '_blank', 'width=820,height=900');
+    $('#takePay').onclick = async () => {
+      if (await saveLoop('Payment on account · ' + c.name, [
+        { name: 'amount_cents', label: `Amount paid (balance ${money(c.balance_cents)})`, type: 'money', required: true },
+        { name: 'method', label: 'Paid with', type: 'select', options: [{ value: 'check', label: 'Check' }, { value: 'cash', label: 'Cash' }, { value: 'card', label: 'Card' }, { value: 'other', label: 'Other' }] },
+        { name: 'check_number', label: 'Check number (for checks)' },
+        { name: 'note', label: 'Note' },
+      ], { amount_cents: Math.max(0, c.balance_cents), method: 'check' }, (v) => api(`/api/customers/${c.id}/payments`, v), 'Record payment')) showCustomer(id);
+    };
+  }
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.receipt) window.open('/receipt?id=' + b.dataset.receipt, '_blank', 'width=420,height=700');
+    if (b.dataset.quote) window.open('/quote?id=' + b.dataset.quote, '_blank', 'width=420,height=700');
+    if (b.dataset.voidpay && confirm('Void this payment? The amount goes back on the balance.')) {
+      try { await api(`/api/account-payments/${b.dataset.voidpay}/void`, {}); toast('Payment voided'); showCustomer(id); } catch (err) { toast(err.message, 'bad'); }
+    }
+  };
+}
+
+// ---------- reports ----------
+const isoDay = (d) => d.toLocaleDateString('en-CA');
+function rangeFor(preset) {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  const monday = new Date(now); monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  return {
+    today: [now, now], week: [monday, now], month: [new Date(y, m, 1), now], lastmonth: [new Date(y, m - 1, 1), new Date(y, m, 0)],
+    year: [new Date(y, 0, 1), now], lastyear: [new Date(y - 1, 0, 1), new Date(y - 1, 11, 31)],
+  }[preset].map(isoDay);
+}
+let rep = null;
+function csvDownload(name, rows) {
+  const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = name; a.click();
+}
+const dollars = (c) => (c / 100).toFixed(2);
+async function showReports() {
+  const locs = await api('/api/locations');
+  if (!rep) { const [from, to] = rangeFor('month'); rep = { kind: 'tax', group: 'day', from, to, location_id: '', preset: 'month' }; }
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const q = new URLSearchParams({ from: rep.from, to: rep.to, tz, group: rep.group, location_id: rep.location_id });
+  const presets = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'This year'], ['lastyear', 'Last year']];
+  let body = '';
+  if (rep.kind === 'tax') {
+    const d = await api('/api/reports/tax?' + q);
+    const label = (p) => {
+      const dt = new Date(p + 'T12:00:00');
+      return rep.group === 'day' ? dt.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+        : rep.group === 'week' ? 'Week of ' + dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+        : rep.group === 'month' ? dt.toLocaleDateString([], { month: 'long', year: 'numeric' }) : String(dt.getFullYear());
+    };
+    rep.last = { kind: 'tax', rows: [['Period', 'Sales', 'Taxable sales', 'Non-taxable sales', 'Sales before tax', 'Tax collected', 'Total with tax'],
+      ...d.rows.map((r) => [label(r.period), r.sales, dollars(r.taxable), dollars(r.nontaxable), dollars(r.subtotal), dollars(r.tax), dollars(r.total)]),
+      ['TOTAL', d.totals.sales, dollars(d.totals.taxable), dollars(d.totals.nontaxable), dollars(d.totals.subtotal), dollars(d.totals.tax), dollars(d.totals.total)]] };
+    body = `<div class="cards"><div class="stat"><div>Tax collected</div><b>${money(d.totals.tax)}</b></div>
+        <div class="stat"><div>Taxable sales</div><b>${money(d.totals.taxable)}</b></div><div class="stat"><div>Non-taxable sales</div><b>${money(d.totals.nontaxable)}</b></div>
+        <div class="stat"><div>Total with tax</div><b>${money(d.totals.total)}</b></div></div>
+      <div class="tablewrap"><table class="list"><thead><tr><th>${{ day: 'Day', week: 'Week', month: 'Month', year: 'Year' }[rep.group]}</th><th class="num">Sales</th><th class="num">Taxable sales</th><th class="num">Non-taxable</th><th class="num">Tax collected</th><th class="num">Total with tax</th></tr></thead><tbody>
+      ${d.rows.map((r) => `<tr><td>${label(r.period)}</td><td class="num">${r.sales}</td><td class="num">${money(r.taxable)}</td><td class="num">${money(r.nontaxable)}</td><td class="num"><b>${money(r.tax)}</b></td><td class="num">${money(r.total)}</td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">No sales in this period.</td></tr>'}
+      ${d.rows.length > 1 ? `<tr class="totrow"><td>Total</td><td class="num">${d.totals.sales}</td><td class="num">${money(d.totals.taxable)}</td><td class="num">${money(d.totals.nontaxable)}</td><td class="num">${money(d.totals.tax)}</td><td class="num">${money(d.totals.total)}</td></tr>` : ''}</tbody></table></div>
+      <p class="muted" style="font-size:13px">Voided sales are not counted. Delivery and fuel charges count as taxable when they were marked taxable.</p>`;
+  } else {
+    const d = await api('/api/reports/money?' + q);
+    rep.last = { kind: 'money', rows: [['Date', 'Type', 'From', 'Check #', 'Amount'],
+      ...d.checks.map((c) => [new Date(c.created_at).toLocaleDateString(), c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id, c.customer, c.check_number, dollars(c.amount_cents)]),
+      [], ['Cash from sales', '', '', '', dollars(d.cash_sales)], ['Cash account payments', '', '', '', dollars(d.cash_account)], ['Cash refunds', '', '', '', '-' + dollars(d.cash_refunds)],
+      ['Cash total', '', '', '', dollars(d.cash_net)], ['Checks total', '', '', '', dollars(d.checks_total)], ['Cash + checks', '', '', '', dollars(d.cash_net + d.checks_total)]] };
+    body = `<div class="cards"><div class="stat"><div>Cash (after refunds)</div><b>${money(d.cash_net)}</b></div>
+        <div class="stat"><div>Checks (${d.check_count})</div><b>${money(d.checks_total)}</b></div>
+        <div class="stat"><div>Cash + checks</div><b>${money(d.cash_net + d.checks_total)}</b></div></div>
+      <p class="muted" style="margin-top:0">Cash from sales ${money(d.cash_sales)} · cash paid on accounts ${money(d.cash_account)} · cash refunds −${money(d.cash_refunds)}. Card and gift card payments are not included.</p>
+      ${d.days.length > 1 ? `<h3>By day</h3><div class="tablewrap"><table class="list"><thead><tr><th>Day</th><th class="num">Cash</th><th class="num">Checks</th><th class="num">Total</th></tr></thead><tbody>
+        ${d.days.map((x) => `<tr><td>${new Date(x.day + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</td><td class="num">${money(x.cash)}</td><td class="num">${money(x.checks)} <span class="muted">(${x.check_count})</span></td><td class="num"><b>${money(x.cash + x.checks)}</b></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <h3>Checks received</h3><div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>From</th><th>For</th><th>Check #</th><th class="num">Amount</th><th>Deposited</th></tr></thead><tbody>
+        ${d.checks.map((c) => `<tr><td>${new Date(c.created_at).toLocaleString()}</td><td>${esc(c.customer || '')}</td><td>${c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id}</td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td><td>${c.deposit_id ? 'Deposit #' + c.deposit_id : '<span class="muted">Not yet</span>'}</td></tr>`).join('')
+          || '<tr><td colspan="6" class="muted">No checks in this period.</td></tr>'}</tbody></table></div>`;
+  }
+  $('#view').innerHTML = `<div class="bar"><h2>Reports</h2>
+      <button class="${rep.kind === 'tax' ? 'primary' : 'ghost'}" data-kind="tax">Sales tax</button><button class="${rep.kind === 'money' ? 'primary' : 'ghost'}" data-kind="money">Cash & checks</button></div>
+    <div class="bar filters">
+      ${presets.map(([k, l]) => `<button class="${rep.preset === k ? 'primary' : 'ghost'}" data-preset="${k}">${l}</button>`).join('')}
+      <input type="date" id="rFrom" value="${rep.from}"> to <input type="date" id="rTo" value="${rep.to}">
+      ${rep.kind === 'tax' ? `<select id="rGroup">${['day', 'week', 'month', 'year'].map((g) => `<option value="${g}" ${rep.group === g ? 'selected' : ''}>By ${g}</option>`).join('')}</select>` : ''}
+      <select id="rLoc"><option value="">All locations</option>${locs.map((l) => `<option value="${l.id}" ${String(l.id) === String(rep.location_id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+      <button class="ghost" id="rCsv">Download for Excel / QuickBooks</button><button class="ghost" onclick="print()">Print</button>
+    </div>${body}`;
+  $('#view').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.kind) { rep.kind = b.dataset.kind; showReports(); }
+    if (b.dataset.preset) { [rep.from, rep.to] = rangeFor(b.dataset.preset); rep.preset = b.dataset.preset; showReports(); }
+  };
+  const refresh = () => { rep.from = $('#rFrom').value; rep.to = $('#rTo').value; rep.preset = ''; showReports(); };
+  $('#rFrom').onchange = refresh; $('#rTo').onchange = refresh;
+  if ($('#rGroup')) $('#rGroup').onchange = () => { rep.group = $('#rGroup').value; showReports(); };
+  $('#rLoc').onchange = () => { rep.location_id = $('#rLoc').value; showReports(); };
+  $('#rCsv').onclick = () => csvDownload(`${rep.kind === 'tax' ? 'sales-tax' : 'cash-and-checks'}_${rep.from}_to_${rep.to}.csv`, rep.last.rows);
+}
+
+// ---------- bank deposits ----------
+let depLoc = '';
+async function showDeposits() {
+  const [locs, pend, hist] = await Promise.all([api('/api/locations'), api('/api/deposits/pending?location_id=' + depLoc), api('/api/deposits')]);
+  $('#view').innerHTML = `<div class="bar"><h2>Bank deposit</h2>
+      <select id="dLoc"><option value="">All locations</option>${locs.map((l) => `<option value="${l.id}" ${String(l.id) === String(depLoc) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="settings" style="max-width:none">
+      <p class="muted" style="margin-top:0">Cash and checks taken in since the last deposit. Uncheck any check you're not depositing yet.</p>
+      <div class="cards">
+        <div class="stat"><div>Cash collected since last deposit</div><b>${money(pend.cash_net)}</b>
+          <div style="font-size:12px">Sales ${money(pend.cash_sales)} + accounts ${money(pend.cash_account)} − refunds ${money(pend.cash_refunds)}</div></div>
+        <div class="stat"><div>Checks waiting</div><b>${pend.check_count}</b></div>
+        <div class="stat"><div>Deposit total</div><b id="dTotal"></b></div>
+      </div>
+      <label class="check"><input type="checkbox" id="dCashOn" checked> Include cash</label>
+      <label for="dCash">Cash to deposit (change it if you keep some in the drawer)</label><input id="dCash" inputmode="decimal" value="${dollars(Math.max(0, pend.cash_net))}" style="max-width:220px">
+      <h3>Checks</h3>
+      <div class="tablewrap"><table class="list"><thead><tr><th><input type="checkbox" id="dAll" checked></th><th>Date</th><th>From</th><th>Check #</th><th class="num">Amount</th></tr></thead><tbody>
+        ${pend.checks.map((c) => `<tr><td><input type="checkbox" class="dChk" value="${c.key}" data-amt="${c.amount_cents}" checked></td><td>${new Date(c.created_at).toLocaleDateString()}</td>
+          <td>${esc(c.customer || '')}<div class="muted" style="font-size:12px">${c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id}</div></td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td></tr>`).join('')
+          || '<tr><td colspan="5" class="muted">No checks waiting.</td></tr>'}</tbody></table></div>
+      <label for="dNote">Note (optional)</label><input id="dNote" maxlength="300">
+      <button class="primary" id="dMake" style="margin-top:14px">Create deposit slip</button>
+    </div>
+    <h3>Past deposits</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>Location</th><th class="num">Cash</th><th class="num">Checks</th><th class="num">Total</th><th></th></tr></thead><tbody>
+      ${hist.map((d) => `<tr><td>${d.id}</td><td>${new Date(d.created_at).toLocaleString()}<div class="muted" style="font-size:12px">${esc(d.created_by_name || '')}</div></td><td>${esc(d.location_name || 'All')}</td>
+        <td class="num">${money(d.cash_cents)}</td><td class="num">${money(d.checks_cents)} <span class="muted">(${d.check_count})</span></td><td class="num"><b>${money(d.cash_cents + d.checks_cents)}</b></td>
+        <td><button data-slip="${d.id}">Print slip</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No deposits yet.</td></tr>'}</tbody></table></div>`;
+  const total = () => {
+    const cash = $('#dCashOn').checked ? (toCents($('#dCash').value) || 0) : 0;
+    const checks = $$('.dChk').filter((x) => x.checked).reduce((a, x) => a + Number(x.dataset.amt), 0);
+    $('#dTotal').textContent = money(cash + checks); return { cash, checks };
+  };
+  total();
+  $('#dLoc').onchange = () => { depLoc = $('#dLoc').value; showDeposits(); };
+  $('#dAll').onchange = () => { $$('.dChk').forEach((x) => { x.checked = $('#dAll').checked; }); total(); };
+  $('#view').oninput = total; $('#view').onchange = (e) => { if (e.target.id !== 'dLoc') total(); };
+  $('#dMake').onclick = async () => {
+    const t = total();
+    if (!t.cash && !t.checks) { toast('Nothing to deposit', 'bad'); return; }
+    if ($('#dCashOn').checked && toCents($('#dCash').value) === null) { toast('Enter the cash amount', 'bad'); return; }
+    if (!confirm(`Create a deposit of ${money(t.cash + t.checks)}? These checks and the cash will be marked as deposited.`)) return;
+    try {
+      const r = await api('/api/deposits', { location_id: depLoc || null, include_cash: $('#dCashOn').checked, cash_cents: t.cash,
+        check_keys: $$('.dChk').filter((x) => x.checked).map((x) => x.value), note: $('#dNote').value });
+      window.open('/deposit?id=' + r.id, '_blank', 'width=760,height=900'); showDeposits();
+    } catch (err) { toast(err.message, 'bad'); }
+  };
+  $('#view').onclick = (e) => { const b = e.target.closest('[data-slip]'); if (b) window.open('/deposit?id=' + b.dataset.slip, '_blank', 'width=760,height=900'); };
+}
+
 // ---------- refunds owed (checks to mail) ----------
 let refundStatus = 'owed';
 async function showRefunds() {
@@ -508,6 +732,7 @@ async function showSettings() {
       <label>Business name</label><input id="bName" value="${esc(me.business.name)}">
       <label>Accent color</label><input id="bColor" type="color" value="${esc(me.business.accent_color)}" style="height:44px;padding:4px">
       <label>Logo image URL (https://…)</label><input id="bLogo" value="${esc(me.business.logo_url || '')}" placeholder="Optional">
+      <label>Bank & account for deposit slips (e.g. First Bank · acct ending 1234)</label><input id="bDep" value="${esc(me.business.deposit_account || '')}" placeholder="Optional">
       ${me.business.rentals_enabled ? `<label>Rentals: a half day is how many hours?</label><input id="bHalf" type="number" min="1" max="12" value="${me.business.half_day_hours}">` : ''}
       <button class="primary" style="margin-top:14px" id="saveBiz">Save business</button></div>` : ''}
     <div class="settings"><h2 style="margin-top:0">My password</h2>
@@ -516,7 +741,7 @@ async function showSettings() {
       <button class="primary" style="margin-top:14px" id="savePw">Change password</button></div>`;
   if (isOwner) $('#saveBiz').onclick = async () => {
     try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value,
-      half_day_hours: $('#bHalf') ? $('#bHalf').value : null }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
+      half_day_hours: $('#bHalf') ? $('#bHalf').value : null, deposit_account: $('#bDep').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
     catch (e) { toast(e.message, 'bad'); }
   };
   $('#savePw').onclick = async () => {
@@ -525,7 +750,8 @@ async function showSettings() {
   };
 }
 
-const views = { businesses: showBusinesses, products: showProducts, pending: showPending, refunds: showRefunds, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
+const views = { businesses: showBusinesses, products: showProducts, pending: showPending, refunds: showRefunds,
+  customers: showCustomers, reports: showReports, deposits: showDeposits, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
 function route() {
   const tabs = TABS.filter((t) => t.show());
   let id = location.hash.slice(1);
