@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS sales (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS sales_business_date ON sales(business_id, created_at);
+-- Private, unguessable link so a customer can view their receipt without logging in.
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS sales_receipt_token ON sales(receipt_token) WHERE receipt_token IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sale_items (
   id SERIAL PRIMARY KEY,
