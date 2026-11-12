@@ -58,7 +58,34 @@ function resizeImage(file, max = 600) {
   });
 }
 // ---------- receipts ----------
-const PAY_NAMES = { cash: 'Cash', card: 'Card', other: 'Other', gift_card: 'Gift card' };
+const PAY_NAMES = { cash: 'Cash', card: 'Card', other: 'Other', gift_card: 'Gift card', check: 'Check', account: 'Charge account' };
+// Account balance: "$120.00" owed, or "Credit $48.37" when they've paid ahead.
+const balText = (c) => (c < 0 ? `Credit ${money(-c)}` : money(c));
+// Google Maps link for a job site (GPS if known, otherwise the address).
+function mapLink(lat, lng, address) {
+  if (lat != null && lng != null && lat !== '' && lng !== '') return `https://www.google.com/maps?q=${Number(lat)},${Number(lng)}`;
+  if (address) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  return null;
+}
+// Customer / PO / job site block shared by receipts and quotes.
+function jobHtml(s) {
+  const gps = s.job_lat != null && s.job_lng != null ? `${Number(s.job_lat).toFixed(5)}, ${Number(s.job_lng).toFixed(5)}` : '';
+  const rows = [];
+  if (s.customer_name) rows.push(`<div>Customer: <b>${esc(s.customer_name)}</b>${s.customer_company ? ' · ' + esc(s.customer_company) : ''}</div>`);
+  if (s.po_number) rows.push(`<div>PO #: <b>${esc(s.po_number)}</b></div>`);
+  if (s.job_address) rows.push(`<div>Job site: ${esc(s.job_address)}</div>`);
+  if (gps) rows.push(`<div>GPS: ${esc(gps)}</div>`);
+  return rows.length ? `<hr>${rows.join('')}` : '';
+}
+function jobText(s) {
+  const out = [];
+  if (s.customer_name) out.push(`Customer: ${s.customer_name}`);
+  if (s.po_number) out.push(`PO #: ${s.po_number}`);
+  if (s.job_address) out.push(`Job site: ${s.job_address}`);
+  const link = s.job_lat != null && s.job_lng != null ? mapLink(s.job_lat, s.job_lng) : null;
+  if (link) out.push(`Location: ${link}`);
+  return out;
+}
 // "Cash" or "Split: Cash $20.00 + Card $3.26"
 function paidByText(s) {
   const p = s.payments || [];
@@ -74,6 +101,7 @@ function paymentLines(s) {
     if (x.method === 'cash' && x.tendered_cents != null && x.tendered_cents !== x.amount_cents) {
       return { label: `${name} (received ${money(x.tendered_cents)})`, amount: x.amount_cents, change: x.change_cents };
     }
+    if (x.method === 'check' && x.check_number) return { label: `Check #${x.check_number}`, amount: x.amount_cents, change: 0 };
     return { label: name, amount: x.amount_cents, change: 0 };
   });
 }
@@ -88,6 +116,7 @@ function receiptHtml(s) {
     <div>${esc(s.location_name)}</div>${s.location_address ? `<div>${esc(s.location_address)}</div>` : ''}${s.location_phone ? `<div>${esc(s.location_phone)}</div>` : ''}</div>
     <hr><div class="l"><span>Sale #${s.id}</span><span>${fmtDateTime(s.created_at)}</span></div>
     ${s.cashier ? `<div>Cashier: ${esc(s.cashier)}</div>` : ''}
+    ${jobHtml(s)}
     ${s.voided ? '<div class="void">VOID</div>' : ''}<hr>
     ${s.items.map((it) => `<div class="l"><span>${esc(it.name)}${it.taxable ? '' : ' (NT)'}</span><span>${money(it.line_cents)}</span></div>
       ${it.qty > 1 ? `<div>&nbsp;&nbsp;${it.qty} @ ${money(it.unit_cents)}</div>` : ''}`).join('')}
@@ -104,11 +133,41 @@ function receiptHtml(s) {
     ${s.rentals && s.rentals.length ? `<hr><div><b>RENTAL${s.rentals.length > 1 ? 'S' : ''}</b></div>${s.rentals.map((r) =>
       `<div>#${r.id} ${esc(r.item_name)}${r.qty > 1 ? ' ×' + r.qty : ''}</div><div class="l"><span>&nbsp;&nbsp;Due back</span><span><b>${fmtDateTime(r.due_at)}</b></span></div>`).join('')}
       <div>Renter: ${esc(s.rentals[0].customer_name)}</div>` : ''}
+    ${(s.payments || []).some((p) => p.method === 'account') ? '<hr><div>Charged to account. Signature:</div><div style="height:28px;border-bottom:1px solid #000"></div>' : ''}
     <hr><div class="c">Thank you!</div>`;
+}
+// Printed quote.
+function quoteHtml(q) {
+  const items = q.cart || [];
+  return `<div class="c">${q.logo_url ? `<img src="${esc(q.logo_url)}" alt="">` : ''}<h1>${esc(q.business_name)}</h1>
+    <div>${esc(q.location_name || '')}</div>${q.location_address ? `<div>${esc(q.location_address)}</div>` : ''}${q.location_phone ? `<div>${esc(q.location_phone)}</div>` : ''}</div>
+    <hr><div class="c big">PRICE QUOTE #${q.id}</div>
+    <div class="l"><span>Date</span><span>${fmtDateTime(q.created_at)}</span></div>
+    ${q.valid_until ? `<div class="l"><span>Good until</span><span><b>${new Date(q.valid_until + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</b></span></div>` : ''}
+    ${q.customer_phone ? `<div class="l"><span>Phone</span><span>${esc(q.customer_phone)}</span></div>` : ''}
+    ${jobHtml(q)}<hr>
+    ${items.map((it) => `<div class="l"><span>${esc(it.name)}${it.taxable ? '' : ' (NT)'}</span><span>${money(it.unit_cents * it.qty)}</span></div>
+      ${it.qty > 1 ? `<div>&nbsp;&nbsp;${it.qty} @ ${money(it.unit_cents)}</div>` : ''}`).join('')}
+    <hr><div class="l"><span>Subtotal</span><span>${money(q.subtotal_cents)}</span></div>
+    <div class="l"><span>Tax (${Number(q.tax_rate)}%)</span><span>${money(q.tax_cents)}</span></div>
+    <div class="l big"><span>TOTAL</span><span>${money(q.total_cents)}</span></div>
+    ${q.note ? `<hr><div>${esc(q.note)}</div>` : ''}
+    ${q.status === 'sold' ? '<div class="void">SOLD</div>' : q.status === 'canceled' ? '<div class="void">CANCELED</div>' : ''}
+    <hr><div class="c">This is a quote, not a receipt.</div>`;
+}
+function quoteText(q) {
+  const lines = [`*${q.business_name}*`, q.location_name || '', `*Price quote #${q.id}* · ${fmtDateTime(q.created_at)}`];
+  if (q.valid_until) lines.push(`Good until ${new Date(q.valid_until + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`);
+  lines.push(...jobText(q), '');
+  for (const it of (q.cart || []).slice(0, 30)) lines.push(`${it.qty} × ${it.name} — ${money(it.unit_cents * it.qty)}`);
+  lines.push('', `Subtotal: ${money(q.subtotal_cents)}`, `Tax (${Number(q.tax_rate)}%): ${money(q.tax_cents)}`, `*Total: ${money(q.total_cents)}*`);
+  if (q.note) lines.push('', q.note);
+  lines.push('', `Mention quote #${q.id} when you order. Thank you!`);
+  return lines.join('\n');
 }
 // Plain-text receipt for a WhatsApp message.
 function receiptText(s, url) {
-  const lines = [`*${s.business_name}*`, s.location_name, `Receipt #${s.id} · ${fmtDateTime(s.created_at)}`, ''];
+  const lines = [`*${s.business_name}*`, s.location_name, `Receipt #${s.id} · ${fmtDateTime(s.created_at)}`, ...jobText(s), ''];
   const shown = s.items.slice(0, 25);
   for (const it of shown) lines.push(`${it.qty} × ${it.name} — ${money(it.line_cents)}`);
   if (s.items.length > shown.length) lines.push(`…and ${s.items.length - shown.length} more items`);
@@ -168,7 +227,9 @@ function mountWhatsAppBox(el) {
 }
 
 // Opens a small dialog: enter the customer's number, then WhatsApp opens with the receipt ready to send.
+// Pass a sale id, or { title, info, text, phone } for any other message (like a quote).
 async function openWhatsAppDialog(saleId) {
+  const custom = typeof saleId === 'object' && saleId ? saleId : null;
   let back = $('#waModal');
   if (!back) {
     back = document.createElement('div');
@@ -191,13 +252,17 @@ async function openWhatsAppDialog(saleId) {
     ? 'Opens in the WhatsApp Desktop app. (Change this on the checkout screen, in the WhatsApp box.)'
     : 'Opens in your WhatsApp Web tab. (Change this on the checkout screen, in the WhatsApp box.)';
   $('#waPhone').value = ''; $('#waErr').textContent = ''; $('#waInfo').textContent = 'Loading…'; $('#waSend').disabled = true;
+  $('#waForm h2').textContent = custom ? (custom.title || 'Send on WhatsApp') : 'Send receipt on WhatsApp';
   back.classList.add('open'); $('#waPhone').focus();
   let text;
-  try {
+  if (custom) {
+    text = custom.text; $('#waInfo').textContent = custom.info || ''; $('#waPhone').value = custom.phone || ''; $('#waSend').disabled = false;
+  } else try {
     // Fetch first so the Send click can open WhatsApp right away (browsers block delayed pop-ups).
     const r = await api(`/api/sales/${saleId}/share`, {});
     text = receiptText(r.sale, r.url);
     $('#waInfo').textContent = `Receipt #${r.sale.id} · ${money(r.sale.total_cents)}`;
+    if (r.sale.customer_phone) $('#waPhone').value = r.sale.customer_phone;
     $('#waSend').disabled = false;
   } catch (e) { $('#waInfo').textContent = ''; $('#waErr').textContent = e.message; }
   form.onsubmit = (e) => {
