@@ -355,6 +355,7 @@
     <input id="rPhone" type="tel" inputmode="tel" autocomplete="off" required>
     <label for="rDue">Due back</label>
     <input id="rDue" type="datetime-local">
+    <div class="muted" id="rHours" style="font-size:13px;margin-top:4px"></div>
     <div class="rtotal"><span>Rental price</span><b id="rTotal">$0.00</b></div>
     <div class="err" id="rErr"></div>
     <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Add to sale</button></div>
@@ -426,6 +427,7 @@
   </div>
 </div>
 
+<script src="/hours.js"></script>
 <script src="/app.js"></script>
 <script>
 let me, registerId, state = { cart: [], totals: {} }, products = [], category = 'All', es, payMethod;
@@ -1051,16 +1053,18 @@ function rentLength(period, n) {
   const unit = { day: 'day', week: 'week', month: 'month' }[period];
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
 }
-let rentItems = [], halfDayHours = 4, rentPeriod = null;
+let rentItems = [], halfDayHours = 4, rentPeriod = null, rentHours = null, rentTz = 'America/Chicago';
 const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-function rentDue(period, count) {
-  const d = new Date();
-  if (period === 'half_day') d.setHours(d.getHours() + halfDayHours);
-  else if (period === 'day') d.setDate(d.getDate() + count);
-  else if (period === 'week') d.setDate(d.getDate() + 7 * count);
-  else d.setMonth(d.getMonth() + count);
-  return d;
+// Counts only the location's business hours (shared with the server in hours.js).
+function rentDue(period, count) { return Hours.rentalDue(new Date(), period, count, halfDayHours, rentHours, rentTz); }
+function showRentHours() {
+  const v = $('#rDue').value, d = v ? new Date(v) : null;
+  const closed = d && rentHours && !Hours.isOpen(d, rentHours, rentTz);
+  $('#rHours').innerHTML = rentHours
+    ? `Store hours: ${esc(Hours.hoursText(rentHours))}. Closed hours don't count toward the rental time.${closed ? '<br><b style="color:#c0392b">The store is closed at that due-back time.</b>' : ''}`
+    : 'No business hours set for this location, so time is counted around the clock (Manage → Locations → Edit).';
 }
+$('#rDue').addEventListener('input', showRentHours);
 async function refreshOutCount() {
   try {
     const c = await api('/api/rentals/count');
@@ -1068,7 +1072,7 @@ async function refreshOutCount() {
   } catch (e) { /* ignore */ }
 }
 async function openRent(productId) {
-  try { const r = await api('/api/rental-items'); rentItems = r.items; halfDayHours = r.half_day_hours; }
+  try { const r = await api('/api/rental-items?register_id=' + registerId); rentItems = r.items; halfDayHours = r.half_day_hours; rentHours = r.hours; rentTz = r.time_zone; }
   catch (e) { toast(e.message, 'bad'); return; }
   if (!rentItems.length) { toast('No rental items yet. Add one in Manage → Products and check "This is a rental item".', 'bad'); return; }
   $('#rentForm').reset(); $('#rErr').textContent = ''; $('#rQty').value = 1; $('#rCount').value = 1;
@@ -1095,6 +1099,7 @@ function renderRent(resetDue) {
   const count = rentPeriod === 'half_day' ? 1 : Math.max(1, parseInt($('#rCount').value, 10) || 1);
   const qty = Math.max(1, parseInt($('#rQty').value, 10) || 1);
   if (resetDue) $('#rDue').value = toLocalInput(rentDue(rentPeriod, count));
+  showRentHours();
   $('#rTotal').textContent = money(p['rate_' + rentPeriod] * count * qty) + ' + tax';
 }
 $('#rItem').addEventListener('change', () => renderRent(true));
