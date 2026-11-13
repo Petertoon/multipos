@@ -275,4 +275,97 @@ async function openWhatsAppDialog(saleId) {
     if (typeof focusScan === 'function') focusScan();
   };
 }
+// ---------- Text and email receipts ----------
+// Short text message with the receipt link (texts should stay short).
+function smsText(s, url) {
+  return `${s.business_name}: receipt #${s.id}, total ${money(s.total_cents)}.${s.voided ? ' (VOIDED)' : ''} View it here: ${url}`;
+}
+// A small reusable dialog. Returns the elements so each sender fills it in.
+function sendDialog(id, title, field) {
+  let back = $('#' + id);
+  if (!back) {
+    back = document.createElement('div');
+    back.className = 'modal-back'; back.id = id;
+    back.innerHTML = `<form class="modal">
+      <h2>${title}</h2>
+      <div class="muted" data-info>Loading…</div>
+      <label>${field.label}</label>
+      <input data-field type="${field.type}" inputmode="${field.inputmode}" autocomplete="off" placeholder="${field.placeholder}">
+      <div class="muted" data-note style="font-size:13px;margin-top:6px">${field.note}</div>
+      <div class="err" data-err></div>
+      <div class="actions"><button type="button" class="ghost" data-cancel>Cancel</button><button class="primary" data-send disabled>${field.button}</button></div>
+    </form>`;
+    document.body.appendChild(back);
+    back.querySelector('[data-cancel]').onclick = () => back.classList.remove('open');
+  }
+  const q = (k) => back.querySelector(`[data-${k}]`);
+  q('field').value = ''; q('err').textContent = ''; q('info').textContent = 'Loading…'; q('send').disabled = true;
+  back.classList.add('open'); q('field').focus();
+  return { back, form: back.querySelector('form'), q };
+}
+async function openTextDialog(saleId) {
+  const d = sendDialog('smsModal', 'Text the receipt', { label: "Customer's cell number", type: 'tel', inputmode: 'tel', placeholder: '(512) 555-1234',
+    note: 'Opens the Messages app on this device with the receipt link ready, then tap Send. Works on phones and tablets (on a Windows PC it needs Phone Link).',
+    button: 'Open Messages' });
+  let text;
+  try {
+    const r = await api(`/api/sales/${saleId}/share`, {});
+    text = smsText(r.sale, r.url);
+    d.q('info').textContent = `Receipt #${r.sale.id} · ${money(r.sale.total_cents)}`;
+    if (r.sale.customer_phone) d.q('field').value = r.sale.customer_phone;
+    d.q('send').disabled = false;
+  } catch (e) { d.q('info').textContent = ''; d.q('err').textContent = e.message; }
+  d.form.onsubmit = (e) => {
+    e.preventDefault();
+    let num = d.q('field').value.replace(/[^\d+]/g, '');
+    const digits = num.replace(/\D/g, '');
+    if (digits.length === 10 && !num.startsWith('+')) num = '+1' + digits;
+    if (num && (digits.length < 10 || digits.length > 15)) { d.q('err').textContent = 'That phone number does not look right'; return; }
+    launchLink(`sms:${num}?&body=${encodeURIComponent(text)}`);
+    d.back.classList.remove('open');
+    if (typeof focusScan === 'function') focusScan();
+  };
+}
+async function openEmailDialog(saleId) {
+  const d = sendDialog('emailModal', 'Email the receipt', { label: "Customer's email", type: 'email', inputmode: 'email', placeholder: 'name@example.com',
+    note: 'The receipt is emailed right away. Replies go to the store.', button: 'Send email' });
+  const ready = typeof me === 'undefined' || !me.features || me.features.email_receipts;
+  if (!ready) { d.q('info').textContent = ''; d.q('err').textContent = 'Email receipts are not set up on this server yet.'; return; }
+  try {
+    const r = await api(`/api/sales/${saleId}/share`, {});
+    d.q('info').textContent = `Receipt #${r.sale.id} · ${money(r.sale.total_cents)}${r.sale.receipt_emailed_to ? ` · last emailed to ${r.sale.receipt_emailed_to}` : ''}`;
+    d.q('field').value = r.sale.customer_email || r.sale.receipt_emailed_to || '';
+    d.q('send').disabled = false;
+  } catch (e) { d.q('info').textContent = ''; d.q('err').textContent = e.message; }
+  d.form.onsubmit = async (e) => {
+    e.preventDefault();
+    const email = d.q('field').value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) { d.q('err').textContent = 'That email address does not look right'; return; }
+    d.q('send').disabled = true; d.q('send').textContent = 'Sending…'; d.q('err').textContent = '';
+    try {
+      const r = await api(`/api/sales/${saleId}/email`, { email });
+      d.back.classList.remove('open');
+      toast(`Receipt emailed to ${r.to}${r.saved_to_customer ? ' (saved to the customer)' : ''}`);
+      if (typeof focusScan === 'function') focusScan();
+    } catch (err) { d.q('err').textContent = err.message; }
+    finally { d.q('send').disabled = false; d.q('send').textContent = 'Send email'; }
+  };
+}
+// One "Send" button that lets the cashier pick how.
+function openSendChooser(saleId) {
+  let back = $('#sendChoose');
+  if (!back) {
+    back = document.createElement('div'); back.className = 'modal-back'; back.id = 'sendChoose';
+    back.innerHTML = `<div class="modal" style="text-align:center"><h2>Send receipt</h2>
+      <div class="sendgrid"><button class="wa" data-how="wa">WhatsApp</button><button class="ghost" data-how="sms">💬 Text</button><button class="ghost" data-how="email">✉️ Email</button></div>
+      <div class="actions" style="justify-content:center"><button class="ghost" data-x>Cancel</button></div></div>`;
+    document.body.appendChild(back);
+    back.querySelector('[data-x]').onclick = () => back.classList.remove('open');
+  }
+  back.querySelectorAll('[data-how]').forEach((b) => { b.onclick = () => {
+    back.classList.remove('open');
+    ({ wa: openWhatsAppDialog, sms: openTextDialog, email: openEmailDialog })[b.dataset.how](saleId);
+  }; });
+  back.classList.add('open');
+}
 async function logout() { await api('/api/logout', {}); location.href = '/login'; }
