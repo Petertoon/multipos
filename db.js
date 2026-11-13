@@ -293,6 +293,12 @@ CREATE TABLE IF NOT EXISTS quotes (
 );
 CREATE INDEX IF NOT EXISTS quotes_business ON quotes(business_id, status, created_at);
 
+-- ===== Email receipts =====
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS receipt_reply_email TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_emailed_to TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_emailed_at TIMESTAMPTZ;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_email_count INT NOT NULL DEFAULT 0;
+
 -- ===== QuickBooks Online (add-on, switched on per business by the platform admin) =====
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS qbo_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS time_zone TEXT NOT NULL DEFAULT 'America/Chicago';
