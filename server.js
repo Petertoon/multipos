@@ -166,11 +166,11 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone, receipt_reply_email FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
-  res.json({ user: { id, name, email, role }, business });
+  res.json({ user: { id, name, email, role }, business, features: { email_receipts: require('./email').configured() } });
 }));
 
 app.post('/api/me/password', requireLogin, wrap(async (req, res) => {
@@ -258,6 +258,11 @@ app.put('/api/business', ...biz, requireRole('owner'), wrap(async (req, res) => 
   if ('deposit_account' in req.body) {
     await pool.query('UPDATE businesses SET deposit_account=$1 WHERE id=$2',
       [text(req.body.deposit_account, 'Bank account', { required: false, max: 120 }) || null, req.user.business_id]);
+  }
+  if ('receipt_reply_email' in req.body) {
+    const em = String(req.body.receipt_reply_email || '').trim().toLowerCase();
+    if (em && !/^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/i.test(em)) fail(400, 'Reply-to email does not look right');
+    await pool.query('UPDATE businesses SET receipt_reply_email=$1 WHERE id=$2', [em || null, req.user.business_id]);
   }
   if (req.body.half_day_hours != null && req.body.half_day_hours !== '') {
     const h = parseInt(req.body.half_day_hours, 10);
@@ -1509,6 +1514,10 @@ app.post('/api/sales/:id/share', ...biz, wrap(async (req, res) => {
   const sale = await saleWithItems(s.rows[0]);
   const url = `${publicOrigin(req)}/r#${sale.receipt_token}`;
   delete sale.receipt_token;
+  if (sale.customer_id) {
+    const c = await pool.query('SELECT email, phone FROM customers WHERE id=$1 AND business_id=$2', [sale.customer_id, req.user.business_id]);
+    if (c.rows[0]) { sale.customer_email = c.rows[0].email; sale.customer_phone = sale.customer_phone || c.rows[0].phone; }
+  }
   res.json({ sale, url });
 }));
 // Public receipt view for customers (only reachable with the private link).
@@ -1555,6 +1564,7 @@ app.post('/api/sales/:id/void', ...managers, wrap(async (req, res) => {
 
 // ---------- QuickBooks Online (see qbo.js) ----------
 require('./qbo')(app, { pool, wrap, fail, text, requireLogin, requireBusiness, requireRole, requireAdmin, publicOrigin });
+require('./email')(app, { pool, wrap, fail, requireLogin, requireBusiness, publicOrigin, SALE_SELECT, saleWithItems, token });
 
 // ---------- errors ----------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
