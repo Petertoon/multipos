@@ -78,3 +78,12 @@ table.list tr.off td { color: #aaa; }
 .sendgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:16px 0 6px}
 .sendgrid button{padding:16px 8px;font-size:16px}
 #doneModal .actions{flex-wrap:wrap}
+
+.hourtbl{width:100%;border-collapse:collapse}
+.hourtbl td{padding:5px 4px}
+.hourtbl input[type=time]{width:auto;padding:6px}
+.hourtbl .chk{display:flex;align-items:center;gap:6px;margin:0;font-weight:400}
+.hourtbl .chk input{width:auto}
+.locbox h3 span button{margin-left:4px}
+#hoursModal .modal{max-width:600px}
+.hourtbl input[type=time]{min-width:0;max-width:150px}
