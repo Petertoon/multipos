@@ -419,6 +419,8 @@
     <div class="actions" style="justify-content:center">
       <button class="ghost" id="printBtn">Print receipt</button>
       <button class="wa" id="waBtn">WhatsApp</button>
+      <button class="ghost" id="smsBtn">💬 Text</button>
+      <button class="ghost" id="emailBtn">✉️ Email</button>
       <button class="primary" onclick="closeModals()">New sale</button>
     </div>
   </div>
@@ -657,7 +659,7 @@ function renderPay() {
   if (payMethod === 'account' && cust) {
     const room = cust.credit_limit_cents == null ? null : cust.credit_limit_cents - cust.balance_cents;
     $('#acctBox').innerHTML = `<div class="retcard">Charge to <b>${esc(cust.name)}</b>${cust.company ? ' · ' + esc(cust.company) : ''}
-      <div>Balance now ${money(cust.balance_cents)}${room == null ? ' · no credit limit' : ` · ${money(Math.max(0, room))} left of ${money(cust.credit_limit_cents)} limit`}</div></div>`;
+      <div>Balance now ${balText(cust.balance_cents)}${room == null ? ' · no credit limit' : ` · ${money(Math.max(0, room))} left of ${money(cust.credit_limit_cents)} limit`}</div></div>`;
   }
   // Quick cash buttons based on this payment's amount.
   const base = amt || bal;
@@ -773,6 +775,8 @@ $('#payForm').addEventListener('submit', async (e) => {
     paid = []; split = null;
     $('#printBtn').onclick = () => window.open('/receipt?id=' + r.sale_id, '_blank', 'width=420,height=700');
     $('#waBtn').onclick = () => { $('#doneModal').classList.remove('open'); openWhatsAppDialog(r.sale_id); };
+    $('#smsBtn').onclick = () => { $('#doneModal').classList.remove('open'); openTextDialog(r.sale_id); };
+    $('#emailBtn').onclick = () => { $('#doneModal').classList.remove('open'); openEmailDialog(r.sale_id); };
     $('#doneModal').classList.add('open');
     products = await api('/api/products'); renderProducts();
   } catch (err) { paid.pop(); renderPay(); $('#payErr').textContent = err.message; }
@@ -785,7 +789,7 @@ function renderSaleBar() {
   const c = saleInfo.customer;
   const cc = $('#custChip');
   const name = c ? c.name : saleInfo.customer_name;
-  cc.textContent = name ? `👤 ${name}${c && c.charge_account ? ` · acct ${money(c.balance_cents)}` : ''}` : '👤 Customer';
+  cc.textContent = name ? `👤 ${name}${c && c.charge_account ? ` · acct ${balText(c.balance_cents)}` : ''}` : '👤 Customer';
   cc.className = 'chip' + (c && c.charge_account ? ' acct' : name ? ' set' : '');
   $('#poChip').textContent = saleInfo.po_number ? `PO # ${saleInfo.po_number}` : 'PO #';
   $('#poChip').className = 'chip' + (saleInfo.po_number ? ' set' : '');
@@ -818,7 +822,7 @@ async function searchCustomers() {
   $('#custList').innerHTML = custRows.length ? `<table class="list"><thead><tr><th>Customer</th><th>Phone</th><th>Account</th><th></th></tr></thead><tbody>${
     custRows.map((c) => `<tr><td><b>${esc(c.name)}</b>${c.company ? `<div class="muted" style="font-size:12px">${esc(c.company)}</div>` : ''}</td>
       <td>${esc(c.phone || '')}</td>
-      <td>${c.charge_account ? `<span class="acctpill">Charge acct</span><div style="font-size:13px">Balance ${money(c.balance_cents)}${c.credit_limit_cents != null ? ` / ${money(c.credit_limit_cents)}` : ''}</div>` : '<span class="muted">—</span>'}</td>
+      <td>${c.charge_account ? `<span class="acctpill">Charge acct</span><div style="font-size:13px">Balance ${balText(c.balance_cents)}${c.credit_limit_cents != null ? ` / ${money(c.credit_limit_cents)}` : ''}</div>` : '<span class="muted">—</span>'}</td>
       <td style="white-space:nowrap"><button class="primary" data-use="${c.id}">Use</button> <button class="ghost" data-edit="${c.id}">Edit</button>
         ${c.charge_account ? ` <button class="ghost" data-pay="${c.id}">Take payment</button>` : ''}</td></tr>`).join('')}</tbody></table>`
     : '<p class="muted">No customers found. Add a new one.</p>';
@@ -866,7 +870,7 @@ let acctCust = null, apMethod = 'cash';
 function openAcctPay(c) {
   acctCust = c; apMethod = 'cash';
   $('#acctPayForm').reset(); $('#apErr').textContent = '';
-  $('#apInfo').innerHTML = `<b>${esc(c.name)}</b>${c.company ? ' · ' + esc(c.company) : ''}<div>Balance owed: <b>${money(c.balance_cents)}</b></div>`;
+  $('#apInfo').innerHTML = `<b>${esc(c.name)}</b>${c.company ? ' · ' + esc(c.company) : ''}<div>Balance owed: <b>${balText(c.balance_cents)}</b></div>`;
   $('#apAmt').value = c.balance_cents > 0 ? (c.balance_cents / 100).toFixed(2) : '';
   syncAp(); $('#custModal').classList.remove('open'); $('#acctPayModal').classList.add('open'); $('#apAmt').select();
 }
@@ -875,10 +879,11 @@ $('#apSeg').addEventListener('click', (e) => { const b = e.target.closest('butto
 $('#acctPayForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const amt = toCents($('#apAmt').value); if (!amt) { $('#apErr').textContent = 'Enter the amount paid'; return; }
+  if (amt > acctCust.balance_cents && !confirm(`That's more than the ${balText(acctCust.balance_cents)} owed. Keep the extra as a credit on the account?`)) return;
   try {
     await api(`/api/customers/${acctCust.id}/payments`, { method: apMethod, amount_cents: amt, check_number: $('#apCheck').value,
       note: $('#apNote').value, location_id: state.register.location_id });
-    closeModals(); toast(`Payment recorded. ${acctCust.name}'s balance is now ${money(acctCust.balance_cents - amt)}`);
+    closeModals(); toast(`Payment recorded. ${acctCust.name}'s balance is now ${balText(acctCust.balance_cents - amt)}`);
     if (saleInfo.customer_id === acctCust.id) saveInfo({});
   } catch (err) { $('#apErr').textContent = err.message; }
 });
