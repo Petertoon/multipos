@@ -4,6 +4,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const Hours = require('./public/hours.js');
 const path = require('path');
 const QRCode = require('qrcode');
 const { pool, init } = require('./db');
@@ -281,8 +282,10 @@ app.get('/api/locations', ...biz, wrap(async (req, res) => {
 function locationFields(body) {
   const tax = Number(body.tax_rate);
   if (!(tax >= 0 && tax < 30)) fail(400, 'Tax rate is not valid');
+  let hours;
+  try { hours = Hours.cleanHours(body.hours); } catch (e) { fail(400, e.message); }
   return [text(body.name, 'Location name'), text(body.address, 'Address', { required: false, max: 300 }),
-    text(body.phone, 'Phone', { required: false, max: 40 }), tax, body.active !== false];
+    text(body.phone, 'Phone', { required: false, max: 40 }), tax, body.active !== false, hours ? JSON.stringify(hours) : null];
 }
 app.post('/api/locations', ...biz, requireRole('owner'), wrap(async (req, res) => {
   const f = locationFields(req.body);
@@ -290,8 +293,8 @@ app.post('/api/locations', ...biz, requireRole('owner'), wrap(async (req, res) =
   try {
     await client.query('BEGIN');
     const r = await client.query(
-      `INSERT INTO locations (business_id, name, address, phone, tax_rate, active)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, [req.user.business_id, ...f]);
+      `INSERT INTO locations (business_id, name, address, phone, tax_rate, active, hours)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, [req.user.business_id, ...f]);
     await client.query('INSERT INTO registers (location_id, name, pair_token) VALUES ($1,$2,$3)',
       [r.rows[0].id, 'Register 1', token(16)]);
     await client.query('COMMIT');
@@ -301,8 +304,8 @@ app.post('/api/locations', ...biz, requireRole('owner'), wrap(async (req, res) =
 app.put('/api/locations/:id', ...biz, requireRole('owner'), wrap(async (req, res) => {
   const f = locationFields(req.body);
   const r = await pool.query(
-    `UPDATE locations SET name=$1, address=$2, phone=$3, tax_rate=$4, active=$5
-      WHERE id=$6 AND business_id=$7`, [...f, req.params.id, req.user.business_id]);
+    `UPDATE locations SET name=$1, address=$2, phone=$3, tax_rate=$4, active=$5, hours=$6
+      WHERE id=$7 AND business_id=$8`, [...f, req.params.id, req.user.business_id]);
   if (!r.rowCount) fail(404, 'Location not found');
   res.json({ ok: true });
 }));
@@ -498,13 +501,16 @@ app.post('/api/registers/:id/cart/pending', ...biz, wrap(async (req, res) => {
 }));
 // ---------- rentals: add a prepaid rental to the cart ----------
 const PERIODS = { half_day: 'Half day', day: 'Day', week: 'Week', month: 'Month' };
-function rentalDue(start, period, count, halfDayHours) {
-  const d = new Date(start);
-  if (period === 'half_day') d.setHours(d.getHours() + halfDayHours);
-  else if (period === 'day') d.setDate(d.getDate() + count);
-  else if (period === 'week') d.setDate(d.getDate() + 7 * count);
-  else d.setMonth(d.getMonth() + count);
-  return d;
+// Due-back time counts only the location's business hours (see public/hours.js).
+function rentalDue(start, period, count, halfDayHours, loc) {
+  return Hours.rentalDue(start, period, count, halfDayHours, loc && loc.hours, loc && loc.time_zone);
+}
+// Hours + time zone for a register's location.
+async function locHours(registerId, businessId) {
+  if (!registerId) return null;
+  const r = await pool.query(`SELECT l.hours, COALESCE(b.time_zone,'America/Chicago') AS time_zone FROM registers g
+      JOIN locations l ON l.id=g.location_id JOIN businesses b ON b.id=l.business_id WHERE g.id=$1 AND b.id=$2`, [registerId, businessId]);
+  return r.rows[0] || null;
 }
 function periodText(period, count) {
   if (period === 'half_day') return 'Half day';
@@ -526,7 +532,8 @@ app.get('/api/rental-items', ...biz, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT ${PRODUCT_COLS}, (SELECT COALESCE(sum(qty),0)::int FROM rentals r WHERE r.product_id = products.id AND r.status='out') AS units_out
        FROM products WHERE business_id=$1 AND is_rental AND active ORDER BY name`, [req.user.business_id]);
-  res.json({ items: rows, half_day_hours: bset.half_day_hours });
+  const loc = await locHours(req.query.register_id, req.user.business_id);
+  res.json({ items: rows, half_day_hours: bset.half_day_hours, hours: loc && loc.hours, time_zone: loc ? loc.time_zone : 'America/Chicago' });
 }));
 app.post('/api/registers/:id/cart/rental', ...biz, wrap(async (req, res) => {
   const bset = await rentalsOn(req.user.business_id);
@@ -543,7 +550,7 @@ app.post('/api/registers/:id/cart/rental', ...biz, wrap(async (req, res) => {
   const available = prod.rental_units - (await unitsOut(prod.id));
   if (qty > available) fail(400, available > 0 ? `Only ${available} available right now` : `All ${prod.name} units are rented out`);
   const now = new Date();
-  let due = rentalDue(now, period, count, bset.half_day_hours);
+  let due = rentalDue(now, period, count, bset.half_day_hours, await locHours(req.params.id, req.user.business_id));
   if (req.body.due_at) {
     const d = new Date(req.body.due_at);
     if (isNaN(d) || d <= now) fail(400, 'Due back time must be in the future');
@@ -1203,10 +1210,11 @@ app.post('/api/quotes/:id/load', ...biz, wrap(async (req, res) => {
   const reg = await getRegister(req.body.register_id, req.user.business_id);
   if (reg.cart.length && !req.body.replace) fail(409, 'The register already has items. Clear the sale first.');
   const bset = (await pool.query('SELECT half_day_hours FROM businesses WHERE id=$1', [req.user.business_id])).rows[0];
+  const loc = await locHours(reg.id, req.user.business_id);
   // Rentals start now, so their due-back times are figured again from today.
   const cart = quote.cart.map((it) => {
     const copy = { ...it, key: token(6) };
-    if (copy.rental) copy.rental = { ...copy.rental, due_at: rentalDue(new Date(), copy.rental.period, copy.rental.count, bset.half_day_hours).toISOString() };
+    if (copy.rental) copy.rental = { ...copy.rental, due_at: rentalDue(new Date(), copy.rental.period, copy.rental.count, bset.half_day_hours, loc).toISOString() };
     return copy;
   });
   const info = { customer_id: quote.customer_id, customer_name: quote.customer_name, customer_phone: quote.customer_phone,
