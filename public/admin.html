@@ -84,6 +84,7 @@
   </div>
 </div>
 
+<script src="/hours.js"></script>
 <script src="/app.js"></script>
 <script>
 let me, role;
@@ -724,8 +725,9 @@ async function showLocations() {
   const [locs, regs] = await Promise.all([api('/api/locations'), api('/api/registers')]);
   const isOwner = role === 'owner';
   $('#view').innerHTML = `<div class="bar"><h2>Locations & registers</h2>${isOwner ? '<button class="primary" id="addLoc">+ Add location</button>' : ''}</div>
-    ${locs.map((l) => `<div class="locbox"><h3><span>${esc(l.name)} ${l.active ? '' : '<span class="pill off">Off</span>'}</span>${isOwner ? `<button data-editloc="${l.id}">Edit</button>` : ''}</h3>
+    ${locs.map((l) => `<div class="locbox"><h3><span>${esc(l.name)} ${l.active ? '' : '<span class="pill off">Off</span>'}</span>${isOwner ? `<span><button data-hours="${l.id}">Hours</button> <button data-editloc="${l.id}">Edit</button></span>` : ''}</h3>
       <div class="muted">${esc(l.address || 'No address')} · Sales tax ${Number(l.tax_rate)}%</div>
+      <div class="muted">🕘 ${esc(Hours.hoursText(l.hours))}</div>
       <div class="regs">${regs.filter((r) => r.location_id === l.id).map((r) => `<div class="reg">${esc(r.name)} ${r.active ? '' : '<span class="pill off">Off</span>'}<button data-editreg="${r.id}">Edit</button></div>`).join('')}
         <button data-addreg="${l.id}">+ Register</button></div></div>`).join('') || '<p class="muted">No locations yet.</p>'}`;
   const locFields = [
@@ -742,8 +744,9 @@ async function showLocations() {
     const t = e.target;
     if (t.dataset.editloc) {
       const l = locs.find((x) => x.id === Number(t.dataset.editloc));
-      if (await saveLoop('Edit location', locFields, { ...l, tax_rate: Number(l.tax_rate) }, (v) => api('/api/locations/' + l.id, v, 'PUT'))) showLocations();
+      if (await saveLoop('Edit location', locFields, { ...l, tax_rate: Number(l.tax_rate) }, (v) => api('/api/locations/' + l.id, { ...v, hours: l.hours }, 'PUT'))) showLocations();
     }
+    if (t.dataset.hours) editHours(locs.find((x) => x.id === Number(t.dataset.hours)));
     if (t.dataset.addreg) {
       if (await saveLoop('Add register', [{ name: 'name', label: 'Register name', required: true }], { name: 'Register ' + (regs.filter((r) => r.location_id === Number(t.dataset.addreg)).length + 1) },
         (v) => api('/api/registers', { ...v, location_id: Number(t.dataset.addreg) }))) showLocations();
@@ -754,6 +757,57 @@ async function showLocations() {
         (v) => api('/api/registers/' + r.id, v, 'PUT'))) showLocations();
     }
   };
+}
+
+// Business hours for one location. Rentals only count time while the store is open.
+function editHours(l) {
+  let back = $('#hoursModal');
+  if (!back) {
+    back = document.createElement('div'); back.className = 'modal-back'; back.id = 'hoursModal';
+    back.innerHTML = `<form class="modal"><h2>Business hours</h2>
+      <p class="muted" style="margin-top:0">Rental due-back times skip the hours you're closed. A half-day rental counts only open hours.</p>
+      <table class="hourtbl"><tbody></tbody></table>
+      <button type="button" class="ghost" data-copy style="margin-top:8px">Copy Monday to Tue–Fri</button>
+      <div class="err" data-err></div>
+      <div class="actions"><button type="button" class="ghost" data-x>Cancel</button><button class="primary">Save hours</button></div></form>`;
+    document.body.appendChild(back);
+    back.querySelector('[data-x]').onclick = () => back.classList.remove('open');
+  }
+  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const h = l.hours || {};
+  const tb = back.querySelector('tbody');
+  tb.innerHTML = order.map((d) => { const v = h[d]; return `<tr data-d="${d}">
+      <td><b>${Hours.DAY_NAMES[d]}</b></td>
+      <td><label class="chk"><input type="checkbox" data-open ${v ? 'checked' : ''}> Open</label></td>
+      <td><input type="time" data-from value="${v ? v.open : '08:00'}" ${v ? '' : 'disabled'}></td>
+      <td>to</td><td><input type="time" data-to value="${v ? v.close : '17:00'}" ${v ? '' : 'disabled'}></td></tr>`; }).join('');
+  tb.onchange = (e) => { if (e.target.dataset.open !== undefined) { const r = e.target.closest('tr'); r.querySelectorAll('input[type=time]').forEach((i) => { i.disabled = !e.target.checked; }); } };
+  const row = (d) => tb.querySelector(`tr[data-d="${d}"]`);
+  back.querySelector('[data-copy]').onclick = () => {
+    const m = row('mon');
+    for (const d of ['tue', 'wed', 'thu', 'fri']) {
+      const r = row(d);
+      r.querySelector('[data-open]').checked = m.querySelector('[data-open]').checked;
+      r.querySelector('[data-from]').value = m.querySelector('[data-from]').value;
+      r.querySelector('[data-to]').value = m.querySelector('[data-to]').value;
+      r.querySelectorAll('input[type=time]').forEach((i) => { i.disabled = !m.querySelector('[data-open]').checked; });
+    }
+  };
+  const err = back.querySelector('[data-err]'); err.textContent = '';
+  back.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault(); err.textContent = '';
+    const hours = {};
+    for (const d of order) {
+      const r = row(d);
+      hours[d] = r.querySelector('[data-open]').checked ? { open: r.querySelector('[data-from]').value, close: r.querySelector('[data-to]').value } : null;
+    }
+    try {
+      Hours.cleanHours(hours);
+      await api('/api/locations/' + l.id, { name: l.name, address: l.address, phone: l.phone, tax_rate: Number(l.tax_rate), active: l.active, hours }, 'PUT');
+      back.classList.remove('open'); toast('Hours saved'); showLocations();
+    } catch (x) { err.textContent = x.message; }
+  };
+  back.classList.add('open');
 }
 
 // ---------- employees ----------
