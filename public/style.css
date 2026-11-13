@@ -74,3 +74,7 @@ table.list tr.off td { color: #aaa; }
 .badge { background: #e74c3c; color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
 .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #eef1ec; font-weight: 700; }
 .pill.off { background: #f5e1df; color: var(--danger); }
+
+.sendgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:16px 0 6px}
+.sendgrid button{padding:16px 8px;font-size:16px}
+#doneModal .actions{flex-wrap:wrap}
