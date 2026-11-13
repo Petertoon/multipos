@@ -820,14 +820,14 @@ async function showSales() {
     <div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Time</th><th>Location</th><th>Cashier</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
     ${data.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.location_name)} · ${esc(s.register_name || '')}</td>
       <td>${esc(s.cashier || '')}</td><td>${esc(paidByText(s))}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
-      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button class="wa" data-wa="${s.id}">WhatsApp</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
+      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button class="wa" data-send="${s.id}">Send</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No sales in this period.</td></tr>'}</tbody></table></div>`;
   const refresh = () => { salesFilter = { from: $('#sFrom').value, to: $('#sTo').value, location_id: $('#sLoc').value }; showSales(); };
   $('#sFrom').onchange = refresh; $('#sTo').onchange = refresh; $('#sLoc').onchange = refresh;
   $('#view').onclick = async (e) => {
     const t = e.target;
     if (t.dataset.receipt) window.open('/receipt?id=' + t.dataset.receipt, '_blank', 'width=420,height=700');
-    if (t.dataset.wa) openWhatsAppDialog(t.dataset.wa);
+    if (t.dataset.send) openSendChooser(t.dataset.send);
     if (t.dataset.void && confirm(`Void sale #${t.dataset.void}? It will be removed from the totals and tracked stock is put back.`)) {
       try { await api(`/api/sales/${t.dataset.void}/void`, {}); toast('Sale voided'); showSales(); } catch (err) { toast(err.message, 'bad'); }
     }
@@ -841,6 +841,7 @@ async function showSettings() {
       <label>Business name</label><input id="bName" value="${esc(me.business.name)}">
       <label>Accent color</label><input id="bColor" type="color" value="${esc(me.business.accent_color)}" style="height:44px;padding:4px">
       <label>Logo image URL (https://…)</label><input id="bLogo" value="${esc(me.business.logo_url || '')}" placeholder="Optional">
+      <label>Receipt emails: replies go to (leave blank to use the owner's login email)</label><input id="bReply" type="email" value="${esc(me.business.receipt_reply_email || '')}" placeholder="store@example.com">
       <label>Bank & account for deposit slips (e.g. First Bank · acct ending 1234)</label><input id="bDep" value="${esc(me.business.deposit_account || '')}" placeholder="Optional">
       ${me.business.rentals_enabled ? `<label>Rentals: a half day is how many hours?</label><input id="bHalf" type="number" min="1" max="12" value="${me.business.half_day_hours}">` : ''}
       <button class="primary" style="margin-top:14px" id="saveBiz">Save business</button></div>` : ''}
@@ -850,7 +851,7 @@ async function showSettings() {
       <button class="primary" style="margin-top:14px" id="savePw">Change password</button></div>`;
   if (isOwner) $('#saveBiz').onclick = async () => {
     try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value,
-      half_day_hours: $('#bHalf') ? $('#bHalf').value : null, deposit_account: $('#bDep').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
+      half_day_hours: $('#bHalf') ? $('#bHalf').value : null, deposit_account: $('#bDep').value, receipt_reply_email: $('#bReply').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
     catch (e) { toast(e.message, 'bad'); }
   };
   $('#savePw').onclick = async () => {
