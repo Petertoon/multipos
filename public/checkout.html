@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MultiPOS Checkout</title>
+<title>ContractorPOS Checkout</title>
 <link rel="stylesheet" href="/style.css">
 <style>
   body { height: 100vh; display: flex; flex-direction: column; }
@@ -60,6 +60,7 @@
   .chip.set { background: #eaf4ff; border-color: #9cc3f0; color: #174a83; }
   .chip.acct { background: #fff4d6; border-color: #e9c46a; color: #6b4c00; }
   .chip.fee { background: #f4f5f3; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .chip.quote { background: #f2e6ff; color: #5b2a86; border-color: #d9c2ef; }
   .seg3 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .seg3.two { grid-template-columns: 1fr 1fr; }
@@ -116,10 +117,11 @@
 </head>
 <body>
 <div class="topbar">
-  <div class="brand"><img id="logo" alt="" hidden><span>MultiPOS</span></div>
+  <div class="brand"><img id="logo" alt="" hidden><span>ContractorPOS</span></div>
   <div class="biz" id="bizName"></div>
   <select id="registerSel" aria-label="Register"></select>
   <div class="spacer"></div>
+  <a href="/jobs" id="jobsLink" hidden>Job board</a>
   <a href="/checkout" class="active">Checkout</a>
   <a href="/admin" id="adminLink" hidden>Manage</a>
   <span id="userName" class="muted"></span>
@@ -138,6 +140,8 @@
       <button type="button" class="chip" id="custChip">👤 Customer</button>
       <button type="button" class="chip" id="poChip">PO #</button>
       <button type="button" class="chip" id="jobChip">📍 Job site</button>
+      <button type="button" class="chip" id="fulChip">📦 Pickup / Delivery</button>
+      <button type="button" class="chip" id="noteChip">🗒 Note</button>
       <span class="spacer"></span>
       <button type="button" class="chip fee" onclick="openFee('delivery')">🚚 Delivery fee</button>
       <button type="button" class="chip fee" onclick="openFee('fuel')">⛽ Fuel charge</button>
@@ -295,12 +299,43 @@
   </form>
 </div>
 
+<!-- pickup or delivery -->
+<div class="modal-back" id="fulModal">
+  <form class="modal" id="fulForm">
+    <h2>Pickup or delivery?</h2>
+    <div class="seg3 two" id="fulSeg" style="margin-top:6px"><button type="button" data-k="pickup">📦 Customer pickup</button><button type="button" data-k="delivery">🚚 Delivery</button></div>
+    <div id="fulDel" hidden>
+      <label for="fulAddr">Deliver to</label><input id="fulAddr" maxlength="300" autocomplete="off" placeholder="Delivery address">
+      <div class="rowbtns"><button type="button" class="ghost" id="fulUseCust" hidden>Use customer's address</button>
+        <button type="button" class="ghost" id="fulFee">+ Add delivery fee</button></div>
+    </div>
+    <div class="muted" style="font-size:13px;margin-top:8px">Shows on the receipt and invoice.</div>
+    <div class="err" id="fulErr"></div>
+    <div class="actions"><button type="button" class="ghost" id="fulClear">Clear</button><span class="spacer"></span>
+      <button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Save</button></div>
+  </form>
+</div>
+
+<!-- note printed on the invoice -->
+<div class="modal-back" id="noteModal">
+  <form class="modal" id="noteForm">
+    <h2>Note on this invoice</h2>
+    <textarea id="invNote" maxlength="1000" rows="4" style="width:100%" placeholder="Explain something on this sale. It prints on the receipt and invoice."></textarea>
+    <div class="err" id="noteErr"></div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModals()">Cancel</button><button class="primary">Save note</button></div>
+  </form>
+</div>
+
 <!-- delivery fee / fuel charge -->
 <div class="modal-back" id="feeModal">
   <form class="modal" id="feeForm">
     <h2 id="feeTitle">Delivery fee</h2>
     <label for="feeName">Description</label><input id="feeName" maxlength="120">
-    <label>Amount</label>
+    <div id="fuelRow" hidden>
+      <div class="two-col"><div><label for="fuelGal">Gallons</label><input id="fuelGal" inputmode="decimal" placeholder="0"></div>
+        <div><label for="fuelPrice">Price per gallon</label><input id="fuelPrice" inputmode="decimal" placeholder="0.00"></div></div>
+    </div>
+    <label id="feeAmtLbl">Amount</label>
     <div class="seg3 two" id="feeMode"><button type="button" data-k="amt" class="on">Dollar amount</button><button type="button" data-k="pct">% of items</button></div>
     <input id="feeAmt" inputmode="decimal" placeholder="0.00" style="margin-top:8px">
     <div class="muted" id="feeCalc" style="font-size:13px;margin-top:4px"></div>
@@ -419,6 +454,7 @@
     <div class="muted" id="donePaid"></div>
     <div class="actions" style="justify-content:center">
       <button class="ghost" id="printBtn">Print receipt</button>
+      <button class="ghost" id="invBtn">📄 Invoice</button>
       <button class="wa" id="waBtn">WhatsApp</button>
       <button class="ghost" id="smsBtn">💬 Text</button>
       <button class="ghost" id="emailBtn">✉️ Email</button>
@@ -439,6 +475,7 @@ async function start() {
   $('#bizName').textContent = me.business.name;
   if (me.business.logo_url) { $('#logo').src = me.business.logo_url; $('#logo').hidden = false; }
   $('#userName').textContent = me.user.name;
+  if (me.business.jobs_enabled) $('#jobsLink').hidden = false;
   if (me.user.role !== 'cashier') {
     $('#adminLink').hidden = false;
     const showCount = () => api('/api/pending/count').then((r) => {
@@ -776,6 +813,7 @@ $('#payForm').addEventListener('submit', async (e) => {
     $('#donePaid').textContent = 'Paid: ' + paidByText(r);
     paid = []; split = null;
     $('#printBtn').onclick = () => window.open('/receipt?id=' + r.sale_id, '_blank', 'width=420,height=700');
+    $('#invBtn').onclick = () => window.open('/invoice?id=' + r.sale_id, '_blank', 'width=900,height=900');
     $('#waBtn').onclick = () => { $('#doneModal').classList.remove('open'); openWhatsAppDialog(r.sale_id); };
     $('#smsBtn').onclick = () => { $('#doneModal').classList.remove('open'); openTextDialog(r.sale_id); };
     $('#emailBtn').onclick = () => { $('#doneModal').classList.remove('open'); openEmailDialog(r.sale_id); };
@@ -798,19 +836,58 @@ function renderSaleBar() {
   const gps = saleInfo.job_lat != null && saleInfo.job_lng != null;
   $('#jobChip').textContent = saleInfo.job_address ? `📍 ${saleInfo.job_address}` : gps ? `📍 GPS ${Number(saleInfo.job_lat).toFixed(4)}, ${Number(saleInfo.job_lng).toFixed(4)}` : '📍 Job site';
   $('#jobChip').className = 'chip' + (saleInfo.job_address || gps ? ' set' : '');
+  $('#fulChip').textContent = saleInfo.fulfillment === 'delivery' ? '🚚 Delivery' : saleInfo.fulfillment === 'pickup' ? '📦 Pickup' : '📦 Pickup / Delivery';
+  $('#fulChip').className = 'chip' + (saleInfo.fulfillment ? ' set' : '');
+  $('#noteChip').textContent = saleInfo.invoice_note ? '🗒 Note ✓' : '🗒 Note';
+  $('#noteChip').className = 'chip' + (saleInfo.invoice_note ? ' set' : '');
+  $('#noteChip').title = saleInfo.invoice_note || 'Add a note to the invoice';
   if (saleInfo.quote_id) { $('#poChip').textContent = `Quote #${saleInfo.quote_id} · ` + $('#poChip').textContent; $('#poChip').className = 'chip set'; }
 }
 // Saves sale details for this register; pass only what changes.
 async function saveInfo(patch) {
   const next = { customer_id: saleInfo.customer_id || null, customer_name: saleInfo.customer_name || null,
     customer_phone: saleInfo.customer_phone || null, po_number: saleInfo.po_number || null, job_address: saleInfo.job_address || null,
-    job_lat: saleInfo.job_lat ?? null, job_lng: saleInfo.job_lng ?? null, quote_id: saleInfo.quote_id || null, ...patch };
+    job_lat: saleInfo.job_lat ?? null, job_lng: saleInfo.job_lng ?? null, quote_id: saleInfo.quote_id || null,
+    fulfillment: saleInfo.fulfillment || null, invoice_note: saleInfo.invoice_note || null, ...patch };
   saleInfo = await api(`/api/registers/${registerId}/sale-info`, next, 'PUT');
   renderSaleBar();
 }
 $('#custChip').onclick = () => openCustomers();
 $('#poChip').onclick = () => openJob('po');
 $('#jobChip').onclick = () => openJob('job');
+
+// ----- pickup or delivery -----
+let fulPick = null;
+function syncFul() {
+  $$('#fulSeg button').forEach((b) => b.classList.toggle('on', b.dataset.k === fulPick));
+  $('#fulDel').hidden = fulPick !== 'delivery';
+  const c = saleInfo.customer; $('#fulUseCust').hidden = !(c && c.address);
+}
+$('#fulChip').onclick = () => {
+  fulPick = saleInfo.fulfillment || null; $('#fulAddr').value = saleInfo.job_address || ''; $('#fulErr').textContent = '';
+  syncFul(); $('#fulModal').classList.add('open');
+};
+$('#fulSeg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; fulPick = b.dataset.k; syncFul(); if (fulPick === 'delivery') $('#fulAddr').focus(); };
+$('#fulUseCust').onclick = () => { $('#fulAddr').value = saleInfo.customer.address; };
+$('#fulClear').onclick = async () => { try { await saveInfo({ fulfillment: null }); closeModals(); } catch (err) { $('#fulErr').textContent = err.message; } };
+async function saveFul() {
+  if (!fulPick) { $('#fulErr').textContent = 'Pick Customer pickup or Delivery'; return false; }
+  const patch = { fulfillment: fulPick };
+  if (fulPick === 'delivery') patch.job_address = $('#fulAddr').value.trim() || null;
+  await saveInfo(patch); return true;
+}
+$('#fulFee').onclick = async () => { try { if (await saveFul()) { closeModals(); openFee('delivery'); } } catch (err) { $('#fulErr').textContent = err.message; } };
+$('#fulForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try { if (await saveFul()) closeModals(); } catch (err) { $('#fulErr').textContent = err.message; }
+});
+
+// ----- note on the invoice -----
+$('#noteChip').onclick = () => { $('#invNote').value = saleInfo.invoice_note || ''; $('#noteErr').textContent = ''; $('#noteModal').classList.add('open'); $('#invNote').focus(); };
+$('#noteForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try { await saveInfo({ invoice_note: $('#invNote').value.trim() || null }); closeModals(); } catch (err) { $('#noteErr').textContent = err.message; }
+});
 
 // ----- customers -----
 let custRows = [], editingCust = null, custTimer;
@@ -946,10 +1023,15 @@ function openFee(kind) {
   $('#feeName').value = kind === 'fuel' ? 'Fuel charge' : 'Delivery fee';
   $('#feeAmt').value = d.value != null ? d.value : '';
   $('#feeTax').checked = d.taxable != null ? d.taxable : true;
+  const fuel = kind === 'fuel';
+  $('#fuelRow').hidden = !fuel; $('#feeMode').hidden = fuel; $('#feeAmt').hidden = fuel; $('#feeAmtLbl').hidden = fuel;
+  if (fuel) { $('#fuelGal').value = ''; $('#fuelPrice').value = d.price || ''; }
   $('#feeErr').textContent = ''; syncFee();
-  $('#feeModal').classList.add('open'); $('#feeAmt').select();
+  $('#feeModal').classList.add('open'); (fuel ? $('#fuelGal') : $('#feeAmt')).select();
 }
+function fuelGallons() { const g = Number($('#fuelGal').value.replace(/[^\d.]/g, '')); return Number.isFinite(g) && g > 0 ? Math.round(g * 1000) / 1000 : 0; }
 function feeCents() {
+  if (feeKind === 'fuel') { const p = toCents($('#fuelPrice').value); const g = fuelGallons(); return g && p ? Math.round(g * p) : 0; }
   const v = $('#feeAmt').value.trim();
   if (feeMode === 'amt') return toCents(v);
   const pct = Number(v); if (!(pct > 0 && pct <= 100)) return null;
@@ -959,19 +1041,25 @@ function syncFee() {
   $$('#feeMode button').forEach((b) => b.classList.toggle('on', b.dataset.k === feeMode));
   $('#feeAmt').placeholder = feeMode === 'amt' ? '0.00' : 'e.g. 3.5';
   const c = feeCents();
+  if (feeKind === 'fuel') { const g = fuelGallons(), p = toCents($('#fuelPrice').value);
+    $('#feeCalc').textContent = g && p ? `${g} gal × ${money(p)}/gal = ${money(c)}` : 'Enter gallons and the price per gallon'; return; }
   $('#feeCalc').textContent = feeMode === 'pct' ? `${$('#feeAmt').value || 0}% of ${money(itemsSubtotal())} in items = ${money(c || 0)}` : '';
 }
 $('#feeMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; feeMode = b.dataset.k; syncFee(); $('#feeAmt').focus(); });
 $('#feeAmt').addEventListener('input', syncFee);
+$('#fuelGal').addEventListener('input', syncFee); $('#fuelPrice').addEventListener('input', syncFee);
 $('#feeForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const c = feeCents(); if (!c) { $('#feeErr').textContent = feeMode === 'pct' ? 'Enter a percent, and add items first' : 'Enter the amount'; return; }
+  const c = feeCents();
+  if (!c) { $('#feeErr').textContent = feeKind === 'fuel' ? 'Enter gallons and the price per gallon' : feeMode === 'pct' ? 'Enter a percent, and add items first' : 'Enter the amount'; return; }
   const label = $('#feeName').value.trim() || $('#feeTitle').textContent;
-  const name = feeMode === 'pct' ? `${label} (${$('#feeAmt').value.trim()}%)` : label;
+  const name = feeKind === 'fuel' ? `${label} (${fuelGallons()} gal @ ${money(toCents($('#fuelPrice').value))}/gal)`
+    : feeMode === 'pct' ? `${label} (${$('#feeAmt').value.trim()}%)` : label;
   try {
     await cartCall('custom', { name, price_cents: c, qty: 1, taxable: $('#feeTax').checked });
     // Remember the last amount used for next time on this computer.
-    const all = feeDefaults(); all[feeKind] = { mode: feeMode, value: $('#feeAmt').value.trim(), taxable: $('#feeTax').checked };
+    const all = feeDefaults(); all[feeKind] = feeKind === 'fuel' ? { price: $('#fuelPrice').value.trim(), taxable: $('#feeTax').checked }
+      : { mode: feeMode, value: $('#feeAmt').value.trim(), taxable: $('#feeTax').checked };
     try { localStorage.setItem('mp_fees_' + me.business.id, JSON.stringify(all)); } catch (err) { /* ok */ }
     closeModals();
   } catch (err) { $('#feeErr').textContent = err.message; }
