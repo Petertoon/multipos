@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MultiPOS Manage</title>
+<title>ContractorPOS Manage</title>
 <link rel="stylesheet" href="/style.css">
 <style>
   main { padding: 16px; max-width: 1100px; margin: 0 auto; }
@@ -37,6 +37,8 @@
   .formhead { font-weight: 800; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
   .rentpill { background: #fff3e0; color: #8a4b00; }
   button.rentson { background: #fff3e0; color: #8a4b00; }
+  button.jobson { background: #e3ecff; color: #1d3f9a; }
+  button.aion { background: #efe7ff; color: #4b2aa8; }
   .stat.refund b { color: #c0392b; }
   .badge { background: #e74c3c; color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
   .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
@@ -56,7 +58,7 @@
 </head>
 <body>
 <div class="topbar">
-  <div class="brand">MultiPOS</div>
+  <div class="brand">ContractorPOS</div>
   <div class="biz" id="bizName"></div>
   <div class="spacer"></div>
   <span id="nav"></span>
@@ -214,7 +216,8 @@ async function showBusinesses() {
     ${list.map((b) => `<tr class="${b.active ? '' : 'off'}"><td><b>${esc(b.name)}</b></td><td>${esc(b.owner_email || '')}</td><td class="num">${b.location_count}</td><td class="num">${b.user_count}</td>
       <td>${b.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
       <td style="white-space:nowrap"><button class="${b.rentals_enabled ? 'rentson' : 'ghost'}" data-rentals="${b.id}" data-on="${b.rentals_enabled}" title="Rentals add-on">🔑 Rentals ${b.rentals_enabled ? 'on' : 'off'}</button>
-        <button class="${b.qbo_enabled ? 'qboon' : 'ghost'}" data-qbo="${b.id}" data-on="${b.qbo_enabled}" title="QuickBooks add-on">QuickBooks ${b.qbo_enabled ? 'on' : 'off'}</button></td>
+        <button class="${b.qbo_enabled ? 'qboon' : 'ghost'}" data-qbo="${b.id}" data-on="${b.qbo_enabled}" title="QuickBooks add-on">QuickBooks ${b.qbo_enabled ? 'on' : 'off'}</button>
+        <button class="${b.ai_enabled ? 'aion' : 'ghost'}" data-ai="${b.id}" data-on="${b.ai_enabled}" title="Claude add-on: ask about plans and photos, materials estimates. ${b.claude_month} request(s) this month">✨ Claude ${b.ai_enabled ? 'on' : 'off'}${b.claude_month ? ` · ${b.claude_month} this month` : ''}</button></td>
       <td style="white-space:nowrap"><button class="primary" data-enter="${b.id}">Open</button> <button data-toggle="${b.id}" data-active="${b.active}">${b.active ? 'Turn off' : 'Turn on'}</button></td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No businesses yet. Create the first one.</td></tr>'}
     </tbody></table></div>`;
@@ -230,7 +233,16 @@ async function showBusinesses() {
   };
   $('#view').onclick = async (e) => {
     const en = e.target.closest('[data-enter]'), tg = e.target.closest('[data-toggle]'), rt = e.target.closest('[data-rentals]');
-    const qb = e.target.closest('[data-qbo]');
+    const qb = e.target.closest('[data-qbo]'), jb = e.target.closest('[data-jobs]'), ab = e.target.closest('[data-ai]');
+    if (ab) {
+      const on = ab.dataset.on !== 'true';
+      await api('/api/admin/businesses/' + ab.dataset.ai, { ai_enabled: on }, 'PUT'); showBusinesses(); return;
+    }
+    if (jb) {
+      const on = jb.dataset.on !== 'true';
+      if (!on && !confirm('Turn off the job board for this business? It will be hidden. Nothing is deleted.')) return;
+      await api('/api/admin/businesses/' + jb.dataset.jobs, { jobs_enabled: on }, 'PUT'); showBusinesses(); return;
+    }
     if (qb) {
       const on = qb.dataset.on !== 'true';
       if (!on && !confirm('Turn off QuickBooks for this business? Syncing stops. Nothing already in QuickBooks is removed.')) return;
@@ -433,11 +445,11 @@ async function showCustomer(id) {
         <td>${a.kind === 'charge' ? `Sale #${a.ref_id}${a.po_number ? ' · PO ' + esc(a.po_number) : ''}${a.job_address ? `<div class="muted" style="font-size:12px">${esc(a.job_address)}</div>` : ''}`
           : `${esc(PAY_NAMES[a.method] || a.method)}${a.check_number ? ' #' + esc(a.check_number) : ''}`}</td>
         <td class="num">${a.kind === 'charge' ? money(a.amount_cents) : ''}</td><td class="num">${a.kind === 'payment' ? money(a.amount_cents) : ''}</td>
-        <td>${a.kind === 'charge' ? `<button data-receipt="${a.ref_id}">Receipt</button>` : !a.voided ? `<button data-voidpay="${a.ref_id}">Void</button>` : ''}</td></tr>`).join('')
+        <td>${a.kind === 'charge' ? `<button data-invoice="${a.ref_id}">Invoice</button>` : !a.voided ? `<button data-voidpay="${a.ref_id}">Void</button>` : ''}</td></tr>`).join('')
         || '<tr><td colspan="6" class="muted">No account activity yet.</td></tr>'}</tbody></table></div>` : ''}
     <h3>Recent sales</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>PO</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
       ${c.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.po_number || '')}</td><td>${esc(PAY_NAMES[s.payment_method] || s.payment_method)}</td>
-        <td class="num">${money(s.total_cents)}</td><td><button data-receipt="${s.id}">Receipt</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No sales yet.</td></tr>'}</tbody></table></div>
+        <td class="num">${money(s.total_cents)}</td><td style="white-space:nowrap"><button data-invoice="${s.id}">Invoice</button> <button data-receipt="${s.id}">Receipt</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No sales yet.</td></tr>'}</tbody></table></div>
     ${c.quotes.length ? `<h3>Quotes</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>PO</th><th>Status</th><th class="num">Total</th><th></th></tr></thead><tbody>
       ${c.quotes.map((q) => `<tr><td>${q.id}</td><td>${new Date(q.created_at).toLocaleDateString()}</td><td>${esc(q.po_number || '')}</td><td>${esc(q.status)}</td>
         <td class="num">${money(q.total_cents)}</td><td><button data-quote="${q.id}">Print</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
@@ -457,6 +469,7 @@ async function showCustomer(id) {
   $('#view').onclick = async (e) => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.receipt) window.open('/receipt?id=' + b.dataset.receipt, '_blank', 'width=420,height=700');
+    if (b.dataset.invoice) window.open('/invoice?id=' + b.dataset.invoice, '_blank', 'width=900,height=900');
     if (b.dataset.quote) window.open('/quote?id=' + b.dataset.quote, '_blank', 'width=420,height=700');
     if (b.dataset.voidpay && confirm('Void this payment? The amount goes back on the balance.')) {
       try { await api(`/api/account-payments/${b.dataset.voidpay}/void`, {}); toast('Payment voided'); showCustomer(id); } catch (err) { toast(err.message, 'bad'); }
@@ -495,31 +508,31 @@ async function showReports() {
         : rep.group === 'week' ? 'Week of ' + dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
         : rep.group === 'month' ? dt.toLocaleDateString([], { month: 'long', year: 'numeric' }) : String(dt.getFullYear());
     };
-    rep.last = { kind: 'tax', rows: [['Period', 'Sales', 'Taxable sales', 'Non-taxable sales', 'Sales before tax', 'Tax collected', 'Total with tax'],
-      ...d.rows.map((r) => [label(r.period), r.sales, dollars(r.taxable), dollars(r.nontaxable), dollars(r.subtotal), dollars(r.tax), dollars(r.total)]),
-      ['TOTAL', d.totals.sales, dollars(d.totals.taxable), dollars(d.totals.nontaxable), dollars(d.totals.subtotal), dollars(d.totals.tax), dollars(d.totals.total)]] };
+    rep.last = { kind: 'tax', rows: [['Period', 'Sales', 'Jobs closed', 'Taxable sales', 'Non-taxable sales', 'Sales before tax', 'Tax collected', 'Total with tax'],
+      ...d.rows.map((r) => [label(r.period), r.sales, r.jobs, dollars(r.taxable), dollars(r.nontaxable), dollars(r.subtotal), dollars(r.tax), dollars(r.total)]),
+      ['TOTAL', d.totals.sales, d.totals.jobs, dollars(d.totals.taxable), dollars(d.totals.nontaxable), dollars(d.totals.subtotal), dollars(d.totals.tax), dollars(d.totals.total)]] };
     body = `<div class="cards"><div class="stat"><div>Tax collected</div><b>${money(d.totals.tax)}</b></div>
         <div class="stat"><div>Taxable sales</div><b>${money(d.totals.taxable)}</b></div><div class="stat"><div>Non-taxable sales</div><b>${money(d.totals.nontaxable)}</b></div>
         <div class="stat"><div>Total with tax</div><b>${money(d.totals.total)}</b></div></div>
-      <div class="tablewrap"><table class="list"><thead><tr><th>${{ day: 'Day', week: 'Week', month: 'Month', year: 'Year' }[rep.group]}</th><th class="num">Sales</th><th class="num">Taxable sales</th><th class="num">Non-taxable</th><th class="num">Tax collected</th><th class="num">Total with tax</th></tr></thead><tbody>
-      ${d.rows.map((r) => `<tr><td>${label(r.period)}</td><td class="num">${r.sales}</td><td class="num">${money(r.taxable)}</td><td class="num">${money(r.nontaxable)}</td><td class="num"><b>${money(r.tax)}</b></td><td class="num">${money(r.total)}</td></tr>`).join('')
-        || '<tr><td colspan="6" class="muted">No sales in this period.</td></tr>'}
-      ${d.rows.length > 1 ? `<tr class="totrow"><td>Total</td><td class="num">${d.totals.sales}</td><td class="num">${money(d.totals.taxable)}</td><td class="num">${money(d.totals.nontaxable)}</td><td class="num">${money(d.totals.tax)}</td><td class="num">${money(d.totals.total)}</td></tr>` : ''}</tbody></table></div>
-      <p class="muted" style="font-size:13px">Voided sales are not counted. Delivery and fuel charges count as taxable when they were marked taxable.</p>`;
+      <div class="tablewrap"><table class="list"><thead><tr><th>${{ day: 'Day', week: 'Week', month: 'Month', year: 'Year' }[rep.group]}</th><th class="num">Sales</th><th class="num">Jobs closed</th><th class="num">Taxable sales</th><th class="num">Non-taxable</th><th class="num">Tax collected</th><th class="num">Total with tax</th></tr></thead><tbody>
+      ${d.rows.map((r) => `<tr><td>${label(r.period)}</td><td class="num">${r.sales}</td><td class="num">${r.jobs}</td><td class="num">${money(r.taxable)}</td><td class="num">${money(r.nontaxable)}</td><td class="num"><b>${money(r.tax)}</b></td><td class="num">${money(r.total)}</td></tr>`).join('')
+        || '<tr><td colspan="7" class="muted">No sales or closed jobs in this period.</td></tr>'}
+      ${d.rows.length > 1 ? `<tr class="totrow"><td>Total</td><td class="num">${d.totals.sales}</td><td class="num">${d.totals.jobs}</td><td class="num">${money(d.totals.taxable)}</td><td class="num">${money(d.totals.nontaxable)}</td><td class="num">${money(d.totals.tax)}</td><td class="num">${money(d.totals.total)}</td></tr>` : ''}</tbody></table></div>
+      <p class="muted" style="font-size:13px">Voided sales are not counted. Delivery and fuel charges count as taxable when they were marked taxable. Jobs count on the day they close (fully paid); job discounts reduce the non-taxable amount.</p>`;
   } else {
     const d = await api('/api/reports/money?' + q);
     rep.last = { kind: 'money', rows: [['Date', 'Type', 'From', 'Check #', 'Amount'],
-      ...d.checks.map((c) => [new Date(c.created_at).toLocaleDateString(), c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id, c.customer, c.check_number, dollars(c.amount_cents)]),
-      [], ['Cash from sales', '', '', '', dollars(d.cash_sales)], ['Cash account payments', '', '', '', dollars(d.cash_account)], ['Cash refunds', '', '', '', '-' + dollars(d.cash_refunds)],
+      ...d.checks.map((c) => [new Date(c.created_at).toLocaleDateString(), (c.kind === 'account' ? 'Account payment' : c.kind === 'job' ? 'Job payment' : 'Sale #' + c.ref_id), c.customer, c.check_number, dollars(c.amount_cents)]),
+      [], ['Cash from sales', '', '', '', dollars(d.cash_sales)], ['Cash account payments', '', '', '', dollars(d.cash_account)], ['Cash job payments', '', '', '', dollars(d.cash_jobs || 0)], ['Cash refunds', '', '', '', '-' + dollars(d.cash_refunds)],
       ['Cash total', '', '', '', dollars(d.cash_net)], ['Checks total', '', '', '', dollars(d.checks_total)], ['Cash + checks', '', '', '', dollars(d.cash_net + d.checks_total)]] };
     body = `<div class="cards"><div class="stat"><div>Cash (after refunds)</div><b>${money(d.cash_net)}</b></div>
         <div class="stat"><div>Checks (${d.check_count})</div><b>${money(d.checks_total)}</b></div>
         <div class="stat"><div>Cash + checks</div><b>${money(d.cash_net + d.checks_total)}</b></div></div>
-      <p class="muted" style="margin-top:0">Cash from sales ${money(d.cash_sales)} · cash paid on accounts ${money(d.cash_account)} · cash refunds −${money(d.cash_refunds)}. Card and gift card payments are not included.</p>
+      <p class="muted" style="margin-top:0">Cash from sales ${money(d.cash_sales)} · cash paid on accounts ${money(d.cash_account)}${d.cash_jobs ? ` · cash paid on jobs ${money(d.cash_jobs)}` : ''} · cash refunds −${money(d.cash_refunds)}. Card and gift card payments are not included.</p>
       ${d.days.length > 1 ? `<h3>By day</h3><div class="tablewrap"><table class="list"><thead><tr><th>Day</th><th class="num">Cash</th><th class="num">Checks</th><th class="num">Total</th></tr></thead><tbody>
         ${d.days.map((x) => `<tr><td>${new Date(x.day + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</td><td class="num">${money(x.cash)}</td><td class="num">${money(x.checks)} <span class="muted">(${x.check_count})</span></td><td class="num"><b>${money(x.cash + x.checks)}</b></td></tr>`).join('')}</tbody></table></div>` : ''}
       <h3>Checks received</h3><div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>From</th><th>For</th><th>Check #</th><th class="num">Amount</th><th>Deposited</th></tr></thead><tbody>
-        ${d.checks.map((c) => `<tr><td>${new Date(c.created_at).toLocaleString()}</td><td>${esc(c.customer || '')}</td><td>${c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id}</td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td><td>${c.deposit_id ? 'Deposit #' + c.deposit_id : '<span class="muted">Not yet</span>'}</td></tr>`).join('')
+        ${d.checks.map((c) => `<tr><td>${new Date(c.created_at).toLocaleString()}</td><td>${esc(c.customer || '')}</td><td>${(c.kind === 'account' ? 'Account payment' : c.kind === 'job' ? 'Job payment' : 'Sale #' + c.ref_id)}</td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td><td>${c.deposit_id ? 'Deposit #' + c.deposit_id : '<span class="muted">Not yet</span>'}</td></tr>`).join('')
           || '<tr><td colspan="6" class="muted">No checks in this period.</td></tr>'}</tbody></table></div>`;
   }
   $('#view').innerHTML = `<div class="bar"><h2>Reports</h2>
@@ -553,7 +566,7 @@ async function showDeposits() {
       <p class="muted" style="margin-top:0">Cash and checks taken in since the last deposit. Uncheck any check you're not depositing yet.</p>
       <div class="cards">
         <div class="stat"><div>Cash collected since last deposit</div><b>${money(pend.cash_net)}</b>
-          <div style="font-size:12px">Sales ${money(pend.cash_sales)} + accounts ${money(pend.cash_account)} − refunds ${money(pend.cash_refunds)}</div></div>
+          <div style="font-size:12px">Sales ${money(pend.cash_sales)} + accounts ${money(pend.cash_account)}${pend.cash_jobs ? ` + jobs ${money(pend.cash_jobs)}` : ''} − refunds ${money(pend.cash_refunds)}</div></div>
         <div class="stat"><div>Checks waiting</div><b>${pend.check_count}</b></div>
         <div class="stat"><div>Deposit total</div><b id="dTotal"></b></div>
       </div>
@@ -562,7 +575,7 @@ async function showDeposits() {
       <h3>Checks</h3>
       <div class="tablewrap"><table class="list"><thead><tr><th><input type="checkbox" id="dAll" checked></th><th>Date</th><th>From</th><th>Check #</th><th class="num">Amount</th></tr></thead><tbody>
         ${pend.checks.map((c) => `<tr><td><input type="checkbox" class="dChk" value="${c.key}" data-amt="${c.amount_cents}" checked></td><td>${new Date(c.created_at).toLocaleDateString()}</td>
-          <td>${esc(c.customer || '')}<div class="muted" style="font-size:12px">${c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id}</div></td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td></tr>`).join('')
+          <td>${esc(c.customer || '')}<div class="muted" style="font-size:12px">${(c.kind === 'account' ? 'Account payment' : c.kind === 'job' ? 'Job payment' : 'Sale #' + c.ref_id)}</div></td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td></tr>`).join('')
           || '<tr><td colspan="5" class="muted">No checks waiting.</td></tr>'}</tbody></table></div>
       <label for="dNote">Note (optional)</label><input id="dNote" maxlength="300">
       <button class="primary" id="dMake" style="margin-top:14px">Create deposit slip</button>
@@ -607,10 +620,11 @@ async function showQuickBooks() {
   }
   if (!s.connected) {
     $('#view').innerHTML = html + `<div class="settings" style="max-width:620px">
-      <p>Connect this business's QuickBooks Online company. MultiPOS will send:</p>
+      <p>Connect this business's QuickBooks Online company. ContractorPOS will send:</p>
       <ul><li><b>One summary per day for each location</b>: sales, rentals, delivery & fuel, sales tax, and how customers paid.</li>
+        <li><b>Job payments</b> as customer deposits when you take them, and <b>job income and sales tax</b> on the day a job closes (fully paid).</li>
         <li><b>Charge account payments and rental refunds</b>, inside that same daily summary.</li>
-        <li><b>Each bank deposit</b> you make in MultiPOS, so it matches your bank statement.</li></ul>
+        <li><b>Each bank deposit</b> you make in ContractorPOS, so it matches your bank statement.</li></ul>
       <p class="muted">Today's activity is sent after the day ends. You'll pick which QuickBooks accounts to use next.${s.environment === 'sandbox' ? ' <b>Test mode:</b> this connects to a QuickBooks sandbox company.' : ''}</p>
       <button class="qbbtn" id="qbConnect">Connect to QuickBooks</button></div>`;
     $('#qbConnect').onclick = async () => { try { location.href = (await api('/api/qbo/connect')).url; } catch (e) { toast(e.message, 'bad'); } };
@@ -635,7 +649,7 @@ async function showQuickBooks() {
     </div>
     <div class="settings" style="max-width:none">
       <h3 style="margin-top:0">1. Accounts</h3>
-      <p class="muted" style="margin-top:0">Easiest: create the recommended MultiPOS accounts in QuickBooks, then choose your bank account. Have your accountant look this over once.</p>
+      <p class="muted" style="margin-top:0">Easiest: create the recommended ContractorPOS accounts in QuickBooks, then choose your bank account. Have your accountant look this over once.</p>
       <button id="qbMake">Create recommended accounts</button>
       <div class="grid2" id="qbMap">${s.roles.map(pick).join('')}</div>
       <h3>2. Start date</h3>
@@ -874,13 +888,14 @@ async function showSales() {
     <div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Time</th><th>Location</th><th>Cashier</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
     ${data.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td><td>${esc(s.location_name)} · ${esc(s.register_name || '')}</td>
       <td>${esc(s.cashier || '')}</td><td>${esc(paidByText(s))}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
-      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button class="wa" data-send="${s.id}">Send</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
+      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button data-invoice="${s.id}">Invoice</button> <button class="wa" data-send="${s.id}">Send</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No sales in this period.</td></tr>'}</tbody></table></div>`;
   const refresh = () => { salesFilter = { from: $('#sFrom').value, to: $('#sTo').value, location_id: $('#sLoc').value }; showSales(); };
   $('#sFrom').onchange = refresh; $('#sTo').onchange = refresh; $('#sLoc').onchange = refresh;
   $('#view').onclick = async (e) => {
     const t = e.target;
     if (t.dataset.receipt) window.open('/receipt?id=' + t.dataset.receipt, '_blank', 'width=420,height=700');
+    if (t.dataset.invoice) window.open('/invoice?id=' + t.dataset.invoice, '_blank', 'width=900,height=900');
     if (t.dataset.send) openSendChooser(t.dataset.send);
     if (t.dataset.void && confirm(`Void sale #${t.dataset.void}? It will be removed from the totals and tracked stock is put back.`)) {
       try { await api(`/api/sales/${t.dataset.void}/void`, {}); toast('Sale voided'); showSales(); } catch (err) { toast(err.message, 'bad'); }
@@ -920,7 +935,8 @@ function route() {
   const tabs = TABS.filter((t) => t.show());
   let id = location.hash.slice(1).split('?')[0];
   if (!tabs.some((t) => t.id === id)) id = tabs[0].id;
-  $('#nav').innerHTML = (me.business ? '<a href="/checkout">Checkout</a>' : '') +
+  $('#nav').innerHTML = (me.business && me.business.jobs_enabled ? '<a href="/jobs">Job board</a>' : '') +
+    (me.business ? '<a href="/checkout">Checkout</a>' : '') +
     tabs.map((t) => `<a href="#${t.id}" class="${t.id === id ? 'active' : ''}">${t.label}</a>`).join('');
   $('#view').onclick = null;
   setPendingBadge(pendingCount);
