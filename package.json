@@ -1,7 +1,7 @@
 {
-  "name": "contractorpos",
-  "version": "1.8.0",
-  "description": "Contractor point of sale: job board, job tickets with progress payments, inventory, rentals, QuickBooks",
+  "name": "multipos",
+  "version": "1.11.0",
+  "description": "Multi-business, multi-location point of sale with phone barcode scanning",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
