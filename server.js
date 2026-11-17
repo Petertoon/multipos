@@ -1,4 +1,4 @@
-// ContractorPOS server: login, businesses, locations, registers, products, checkout,
+// MultiPOS server: login, businesses, locations, registers, products, checkout,
 // phone scanner pairing, and live cart updates (Server-Sent Events).
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -167,13 +167,11 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, jobs_enabled, ai_enabled, time_zone, receipt_reply_email FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone, receipt_reply_email FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
-  res.json({ user: { id, name, email, role }, business, features: { email_receipts: require('./email').configured(),
-    ai_estimates: !!process.env.ANTHROPIC_API_KEY && !!(business && business.ai_enabled),
-    ai_key_missing: !process.env.ANTHROPIC_API_KEY } });
+  res.json({ user: { id, name, email, role }, business, features: { email_receipts: require('./email').configured() } });
 }));
 
 app.post('/api/me/password', requireLogin, wrap(async (req, res) => {
@@ -192,8 +190,7 @@ app.get('/api/admin/businesses', requireLogin, requireAdmin, wrap(async (req, re
     SELECT b.*,
       (SELECT count(*) FROM locations l WHERE l.business_id = b.id)::int AS location_count,
       (SELECT count(*) FROM users u WHERE u.business_id = b.id)::int AS user_count,
-      (SELECT email FROM users u WHERE u.business_id = b.id AND u.role = 'owner' ORDER BY u.id LIMIT 1) AS owner_email,
-      (SELECT count(*) FROM claude_requests c WHERE c.business_id = b.id AND c.ok AND c.created_at >= date_trunc('month', now()))::int AS claude_month
+      (SELECT email FROM users u WHERE u.business_id = b.id AND u.role = 'owner' ORDER BY u.id LIMIT 1) AS owner_email
     FROM businesses b ORDER BY b.name`);
   res.json(rows);
 }));
@@ -232,8 +229,6 @@ app.put('/api/admin/businesses/:id', requireLogin, requireAdmin, wrap(async (req
   // Only the fields sent are changed: { active } and/or { rentals_enabled }.
   if ('active' in req.body) await pool.query('UPDATE businesses SET active = $1 WHERE id = $2', [!!req.body.active, req.params.id]);
   if ('rentals_enabled' in req.body) await pool.query('UPDATE businesses SET rentals_enabled = $1 WHERE id = $2', [!!req.body.rentals_enabled, req.params.id]);
-  if ('jobs_enabled' in req.body) await pool.query('UPDATE businesses SET jobs_enabled = $1 WHERE id = $2', [!!req.body.jobs_enabled, req.params.id]);
-  if ('ai_enabled' in req.body) await pool.query('UPDATE businesses SET ai_enabled = $1 WHERE id = $2', [!!req.body.ai_enabled, req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -885,31 +880,10 @@ app.get('/api/reports/tax', ...managers, wrap(async (req, res) => {
             sum(s.tax_cents)::bigint AS tax,
             sum(s.total_cents)::bigint AS total
        FROM sales s WHERE ${where} GROUP BY 1 ORDER BY 1`, params);
-  // Jobs count on the day they close (fully paid); same tax math as the job ticket. Discounts reduce the non-taxable part.
-  const jp = [req.user.business_id, from, to, tz, group];
-  let jwhere = `j.business_id = $1 AND j.closed_at IS NOT NULL AND (j.closed_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`;
-  if (loc) { jp.push(loc); jwhere += ` AND j.location_id = $${jp.length}`; }
-  const jobRows = await pool.query(
-    `SELECT period, count(*)::int AS jobs, sum(net)::bigint AS subtotal, sum(taxable)::bigint AS taxable, sum(tax)::bigint AS tax FROM (
-       SELECT to_char(date_trunc($5, j.closed_at AT TIME ZONE $4), 'YYYY-MM-DD') AS period,
-              j.quoted_cents + COALESCE(x.extras, 0) - j.discount_cents AS net, COALESCE(x.taxable, 0) AS taxable,
-              CASE WHEN j.tax_exempt THEN 0 ELSE round(COALESCE(x.taxable, 0) * j.tax_rate / 100) END AS tax
-         FROM jobs j LEFT JOIN LATERAL (SELECT sum(qty * unit_cents) AS extras, sum(qty * unit_cents) FILTER (WHERE taxable) AS taxable
-                                          FROM job_items WHERE job_id = j.id) x ON TRUE
-        WHERE ${jwhere}) y GROUP BY period`, jp);
-  const byPeriod = new Map();
-  for (const r of rows) {
-    byPeriod.set(r.period, { period: r.period, sales: r.sales, jobs: 0, subtotal: Number(r.subtotal), taxable: Number(r.taxable), tax: Number(r.tax) });
-  }
-  for (const r of jobRows.rows) {
-    const p = byPeriod.get(r.period) || { period: r.period, sales: 0, jobs: 0, subtotal: 0, taxable: 0, tax: 0 };
-    p.jobs += r.jobs; p.subtotal += Number(r.subtotal); p.taxable += Number(r.taxable); p.tax += Number(r.tax);
-    byPeriod.set(r.period, p);
-  }
-  const out = [...byPeriod.values()].sort((a, b) => a.period.localeCompare(b.period))
-    .map((r) => ({ ...r, nontaxable: r.subtotal - r.taxable, total: r.subtotal + r.tax }));
+  const out = rows.map((r) => ({ period: r.period, sales: r.sales, subtotal: Number(r.subtotal), taxable: Number(r.taxable),
+    nontaxable: Number(r.subtotal) - Number(r.taxable), tax: Number(r.tax), total: Number(r.total) }));
   const sum = (k) => out.reduce((a, r) => a + r[k], 0);
-  res.json({ group, rows: out, totals: { sales: sum('sales'), jobs: sum('jobs'), subtotal: sum('subtotal'), taxable: sum('taxable'),
+  res.json({ group, rows: out, totals: { sales: sum('sales'), subtotal: sum('subtotal'), taxable: sum('taxable'),
     nontaxable: sum('nontaxable'), tax: sum('tax'), total: sum('total') } });
 }));
 
@@ -935,12 +909,6 @@ async function moneyRows(businessId, { from, to, tz, loc, undepositedOnly }) {
         WHERE a.business_id = $1 AND NOT a.voided AND a.method IN ('cash','check') AND ${dateCond('a.created_at')} AND ${dep('a.deposit_id')}
           ${locIdx ? `AND a.location_id = $${locIdx}` : ''}
        UNION ALL
-       SELECT 'j:' || jp.id, 'job', jp.job_id, jp.method, jp.amount_cents, jp.check_number,
-              COALESCE(j.customer_name, j.name), jp.created_at, jp.deposit_id, jp.location_id
-         FROM job_payments jp JOIN jobs j ON j.id = jp.job_id
-        WHERE jp.business_id = $1 AND NOT jp.voided AND jp.method IN ('cash','check') AND ${dateCond('jp.created_at')} AND ${dep('jp.deposit_id')}
-          ${locIdx ? `AND jp.location_id = $${locIdx}` : ''}
-       UNION ALL
        SELECT 'r:' || f.id, 'refund', f.id, 'cash', -f.amount_cents, NULL, COALESCE(f.customer_name, ''), f.created_at, f.deposit_id, f.location_id
          FROM refunds f
         WHERE f.business_id = $1 AND f.method = 'cash' AND ${dateCond('f.created_at')} AND ${dep('f.deposit_id')}
@@ -952,11 +920,10 @@ function summarizeMoney(rows) {
   const cashIn = rows.filter((r) => r.method === 'cash' && r.amount_cents > 0);
   const cashSales = cashIn.filter((r) => r.kind === 'sale').reduce((a, r) => a + r.amount_cents, 0);
   const cashAccount = cashIn.filter((r) => r.kind === 'account').reduce((a, r) => a + r.amount_cents, 0);
-  const cashJobs = cashIn.filter((r) => r.kind === 'job').reduce((a, r) => a + r.amount_cents, 0);
   const cashRefunds = -rows.filter((r) => r.kind === 'refund').reduce((a, r) => a + r.amount_cents, 0);
   const checks = rows.filter((r) => r.method === 'check');
-  return { cash_sales: cashSales, cash_account: cashAccount, cash_jobs: cashJobs, cash_refunds: cashRefunds,
-    cash_net: cashSales + cashAccount + cashJobs - cashRefunds,
+  return { cash_sales: cashSales, cash_account: cashAccount, cash_refunds: cashRefunds,
+    cash_net: cashSales + cashAccount - cashRefunds,
     checks_total: checks.reduce((a, r) => a + r.amount_cents, 0), check_count: checks.length, checks };
 }
 app.get('/api/reports/money', ...managers, wrap(async (req, res) => {
@@ -1002,7 +969,7 @@ app.post('/api/deposits', ...managers, wrap(async (req, res) => {
     const id = d.rows[0].id;
     const mark = async (key) => {
       const [kind, rid] = key.split(':');
-      const table = { s: 'sale_payments', a: 'account_payments', j: 'job_payments', r: 'refunds' }[kind];
+      const table = { s: 'sale_payments', a: 'account_payments', r: 'refunds' }[kind];
       await client.query(`UPDATE ${table} SET deposit_id = $1 WHERE id = $2 AND deposit_id IS NULL`, [id, Number(rid)]);
     };
     // Cash: everything collected since the last deposit is counted in this one.
@@ -1032,9 +999,6 @@ app.get('/api/deposits/:id', ...managers, wrap(async (req, res) => {
      UNION ALL
      SELECT a.check_number, a.amount_cents, c.name, a.created_at
        FROM account_payments a JOIN customers c ON c.id = a.customer_id WHERE a.deposit_id = $1 AND a.method = 'check'
-     UNION ALL
-     SELECT jp.check_number, jp.amount_cents, COALESCE(j.customer_name, j.name), jp.created_at
-       FROM job_payments jp JOIN jobs j ON j.id = jp.job_id WHERE jp.deposit_id = $1 AND jp.method = 'check'
      ORDER BY 4`, [req.params.id]);
   res.json({ ...d.rows[0], checks: checks.rows });
 }));
@@ -1614,10 +1578,6 @@ app.post('/api/sales/:id/void', ...managers, wrap(async (req, res) => {
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
-// ---------- Jobs add-on: contractor job board (see jobs.js) ----------
-const jobsApi = require('./jobs')(app, { pool, wrap, fail, text, cents, requireLogin, requireBusiness, requireRole, barcodeVariants, publicOrigin, token });
-require('./jobfiles')(app, { pool, wrap, fail, text, ...jobsApi });
-
 // ---------- QuickBooks Online (see qbo.js) ----------
 require('./qbo')(app, { pool, wrap, fail, text, requireLogin, requireBusiness, requireRole, requireAdmin, publicOrigin });
 // Note printed on an invoice (can be added or changed after the sale).
@@ -1664,14 +1624,14 @@ require('./email')(app, { pool, wrap, fail, requireLogin, requireBusiness, publi
 // ---------- errors ----------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, req, res, next) => {
-  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'That file is too large (20 MB max for plans, smaller for photos)' });
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request' });
   if (err.status) return res.status(err.status).json({ error: err.message });
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'That upload is too large' });
   console.error(err);
   res.status(500).json({ error: 'Something went wrong on the server' });
 });
 
 const PORT = process.env.PORT || 3000;
 init().then(() => {
-  app.listen(PORT, () => console.log(`ContractorPOS running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`MultiPOS running on port ${PORT}`));
 }).catch((e) => { console.error('Database setup failed:', e); process.exit(1); });
