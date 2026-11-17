@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #000; background: #fff; margin: 0; font-size: 14px; }
+  .page { max-width: 780px; margin: 0 auto; padding: 28px 24px; }
+  .muted { color: #666; }
+  .lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #555; margin-bottom: 3px; }
+  .inv-top { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+  .inv-cust { flex: 1; line-height: 1.45; border: 1px solid #000; padding: 10px 12px; max-width: 340px; }
+  .inv-store { text-align: right; line-height: 1.4; }
+  .inv-store img { max-height: 60px; max-width: 200px; }
+  .inv-store .bn { font-size: 20px; font-weight: 800; }
+  .inv-title { font-size: 22px; font-weight: 800; margin-top: 10px; }
+  .inv-meta { margin-left: auto; border-collapse: collapse; margin-top: 4px; }
+  .inv-meta td { padding: 1px 0 1px 12px; text-align: right; } .inv-meta td:first-child { color: #555; }
+  .inv-void { margin-top: 16px; border: 3px solid #000; text-align: center; font-size: 24px; font-weight: 800; padding: 4px; }
+  .inv-items { width: 100%; border-collapse: collapse; margin-top: 22px; }
+  .inv-items th { font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #000; padding: 6px 4px; text-align: left; }
+  .inv-items td { border-bottom: 1px solid #ccc; padding: 6px 4px; vertical-align: top; }
+  .n { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .inv-bottom { display: flex; justify-content: space-between; gap: 24px; margin-top: 14px; align-items: flex-start; }
+  .inv-note { flex: 1; line-height: 1.45; }
+  .inv-tot { border-collapse: collapse; min-width: 260px; }
+  .inv-tot td { padding: 3px 4px; } .inv-tot td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .inv-tot .big td { font-weight: 800; font-size: 16px; border-top: 1px solid #000; }
+  .inv-tot .paid { text-align: center !important; font-weight: 800; border: 2px solid #000; }
+  .inv-sign { margin-top: 36px; }
+  .inv-thanks { margin-top: 28px; text-align: center; color: #444; }
+  .noprint { max-width: 780px; margin: 0 auto; padding: 12px 24px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    background: #f4f5f3; border-bottom: 1px solid #ddd; }
+  .noprint button { font: 15px system-ui; padding: 9px 16px; }
+  .noprint textarea { flex: 1 1 100%; font: 14px system-ui; padding: 8px; min-height: 54px; }
+  @media print { .noprint { display: none; } @page { margin: 12mm; } }
+</style>
+</head>
+<body>
+<div class="noprint">
+  <button onclick="print()">🖨 Print</button>
+  <button id="noteBtn">🗒 Note on this invoice</button>
+  <button onclick="close()">Close</button>
+  <div id="noteBox" hidden style="flex:1 1 100%">
+    <textarea id="note" maxlength="1000" placeholder="Explain something on this invoice. It prints in the Note box."></textarea>
+    <button id="saveNote">Save note</button> <span id="msg" class="muted"></span>
+  </div>
+</div>
+<div class="page" id="p">Loading…</div>
+<script src="/app.js"></script>
+<script>
+// Full-page invoice: /invoice?id=<sale id>
+const id = new URLSearchParams(location.search).get('id');
+let sale;
+async function load() {
+  sale = await api('/api/sales/' + encodeURIComponent(id));
+  document.title = `Invoice #${sale.id}`;
+  $('#p').innerHTML = invoiceHtml(sale);
+  $('#note').value = sale.invoice_note || '';
+}
+$('#noteBtn').onclick = () => { $('#noteBox').hidden = !$('#noteBox').hidden; $('#note').focus(); };
+$('#saveNote').onclick = async () => {
+  try {
+    await api(`/api/sales/${id}/note`, { invoice_note: $('#note').value }, 'PUT');
+    $('#msg').textContent = 'Saved.'; await load();
+  } catch (e) { $('#msg').textContent = e.message; }
+};
+load().catch((e) => { $('#p').textContent = e.message; });
+</script>
+</body>
+</html>
