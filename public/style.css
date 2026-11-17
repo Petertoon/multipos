@@ -87,3 +87,4 @@ table.list tr.off td { color: #aaa; }
 .locbox h3 span button{margin-left:4px}
 #hoursModal .modal{max-width:600px}
 .hourtbl input[type=time]{min-width:0;max-width:150px}
+.actions .spacer { flex: 1; }
