@@ -1,4 +1,4 @@
-// Shared helpers for all MultiPOS pages.
+// Shared helpers for all ContractorPOS pages.
 async function api(path, body, method) {
   const opts = { method: method || (body === undefined ? 'GET' : 'POST'), headers: {}, credentials: 'same-origin' };
   if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
@@ -72,16 +72,18 @@ function jobHtml(s) {
   const gps = s.job_lat != null && s.job_lng != null ? `${Number(s.job_lat).toFixed(5)}, ${Number(s.job_lng).toFixed(5)}` : '';
   const rows = [];
   if (s.customer_name) rows.push(`<div>Customer: <b>${esc(s.customer_name)}</b>${s.customer_company ? ' · ' + esc(s.customer_company) : ''}</div>`);
+  if (s.fulfillment) rows.push(`<div><b>${s.fulfillment === 'delivery' ? 'DELIVERY' : 'CUSTOMER PICKUP'}</b></div>`);
   if (s.po_number) rows.push(`<div>PO #: <b>${esc(s.po_number)}</b></div>`);
-  if (s.job_address) rows.push(`<div>Job site: ${esc(s.job_address)}</div>`);
+  if (s.job_address) rows.push(`<div>${s.fulfillment === 'delivery' ? 'Deliver to' : 'Job site'}: ${esc(s.job_address)}</div>`);
   if (gps) rows.push(`<div>GPS: ${esc(gps)}</div>`);
   return rows.length ? `<hr>${rows.join('')}` : '';
 }
 function jobText(s) {
   const out = [];
   if (s.customer_name) out.push(`Customer: ${s.customer_name}`);
+  if (s.fulfillment) out.push(s.fulfillment === 'delivery' ? 'Delivery' : 'Customer pickup');
   if (s.po_number) out.push(`PO #: ${s.po_number}`);
-  if (s.job_address) out.push(`Job site: ${s.job_address}`);
+  if (s.job_address) out.push(`${s.fulfillment === 'delivery' ? 'Deliver to' : 'Job site'}: ${s.job_address}`);
   const link = s.job_lat != null && s.job_lng != null ? mapLink(s.job_lat, s.job_lng) : null;
   if (link) out.push(`Location: ${link}`);
   return out;
@@ -130,11 +132,50 @@ function receiptHtml(s) {
         lines.map((l) => `<div class="l"><span>${lines.length > 1 ? '&nbsp;&nbsp;' : 'Paid by '}${esc(l.label)}</span><span>${money(l.amount)}</span></div>`).join('') +
         (lines.some((l) => l.label.startsWith('Cash')) ? `<div class="l"><span>Change</span><span>${money(change)}</span></div>` : '');
     })()}
+    ${s.invoice_note ? `<hr><div><b>Note:</b> ${esc(s.invoice_note).replace(/\n/g, '<br>')}</div>` : ''}
     ${s.rentals && s.rentals.length ? `<hr><div><b>RENTAL${s.rentals.length > 1 ? 'S' : ''}</b></div>${s.rentals.map((r) =>
       `<div>#${r.id} ${esc(r.item_name)}${r.qty > 1 ? ' ×' + r.qty : ''}</div><div class="l"><span>&nbsp;&nbsp;Due back</span><span><b>${fmtDateTime(r.due_at)}</b></span></div>`).join('')}
       <div>Renter: ${esc(s.rentals[0].customer_name)}</div>` : ''}
     ${(s.payments || []).some((p) => p.method === 'account') ? '<hr><div>Charged to account. Signature:</div><div style="height:28px;border-bottom:1px solid #000"></div>' : ''}
     <hr><div class="c">Thank you!</div>`;
+}
+// Full-page invoice (letter size). Customer details top left, store top right.
+function invoiceHtml(s) {
+  const onAcct = (s.payments || []).filter((p) => p.method === 'account').reduce((a, p) => a + p.amount_cents, 0);
+  const paid = s.total_cents - onAcct;
+  const cust = [s.customer_name && `<b>${esc(s.customer_name)}</b>`, s.customer_company && esc(s.customer_company),
+    s.customer_address && esc(s.customer_address).replace(/\n/g, '<br>'), s.customer_phone_any && esc(s.customer_phone_any),
+    s.customer_email && esc(s.customer_email)].filter(Boolean).join('<br>') || '<span class="muted">Walk-in customer</span>';
+  const gps = s.job_lat != null && s.job_lng != null ? `${Number(s.job_lat).toFixed(5)}, ${Number(s.job_lng).toFixed(5)}` : '';
+  const meta = [['Date', fmtDateTime(s.created_at)], s.po_number && ['PO #', esc(s.po_number)],
+    s.fulfillment && ['Order', s.fulfillment === 'delivery' ? '<b>Delivery</b>' : '<b>Customer pickup</b>'],
+    s.cashier && ['Sold by', esc(s.cashier)]].filter(Boolean);
+  const pays = paymentLines(s).filter((l) => !/account/i.test(l.label));
+  return `<div class="inv-top">
+      <div class="inv-cust"><div class="lbl">SOLD TO</div>${cust}
+        ${s.job_address || gps ? `<div class="lbl" style="margin-top:12px">${s.fulfillment === 'delivery' ? 'DELIVER TO' : 'JOB SITE'}</div>${s.job_address ? esc(s.job_address) : ''}${gps ? `<div>GPS ${esc(gps)}</div>` : ''}` : ''}</div>
+      <div class="inv-store">${s.logo_url ? `<img src="${esc(s.logo_url)}" alt="">` : ''}<div class="bn">${esc(s.business_name)}</div>
+        <div>${esc(s.location_name)}</div>${s.location_address ? `<div>${esc(s.location_address)}</div>` : ''}${s.location_phone ? `<div>${esc(s.location_phone)}</div>` : ''}
+        <div class="inv-title">INVOICE #${s.id}</div>
+        <table class="inv-meta">${meta.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table></div>
+    </div>
+    ${s.voided ? '<div class="inv-void">VOIDED</div>' : ''}
+    <table class="inv-items"><thead><tr><th class="n">Qty</th><th>Description</th><th class="n">Unit price</th><th class="n">Amount</th></tr></thead>
+      <tbody>${s.items.map((it) => `<tr><td class="n">${it.qty}</td><td>${esc(it.name)}${it.taxable ? '' : ' <span class="muted">(non-taxable)</span>'}</td>
+        <td class="n">${money(it.unit_cents)}</td><td class="n">${money(it.line_cents)}</td></tr>`).join('')}</tbody></table>
+    <div class="inv-bottom">
+      <div class="inv-note">${s.invoice_note ? `<div class="lbl">NOTE</div>${esc(s.invoice_note).replace(/\n/g, '<br>')}` : ''}
+        ${s.rentals && s.rentals.length ? `<div class="lbl" style="margin-top:12px">RENTALS</div>${s.rentals.map((r) => `#${r.id} ${esc(r.item_name)}${r.qty > 1 ? ' ×' + r.qty : ''}, due back <b>${fmtDateTime(r.due_at)}</b>`).join('<br>')}` : ''}</div>
+      <table class="inv-tot">
+        <tr><td>Subtotal</td><td>${money(s.subtotal_cents)}</td></tr>
+        <tr><td>Sales tax (${Number(s.tax_rate)}%)</td><td>${money(s.tax_cents)}</td></tr>
+        <tr class="big"><td>Total</td><td>${money(s.total_cents)}</td></tr>
+        ${pays.map((l) => `<tr><td>Paid · ${esc(l.label)}</td><td>${money(l.amount)}</td></tr>`).join('')}
+        ${onAcct ? `<tr class="big"><td>Charged to account</td><td>${money(onAcct)}</td></tr>` : paid >= s.total_cents ? '<tr><td colspan="2" class="paid">PAID IN FULL</td></tr>' : ''}
+      </table>
+    </div>
+    ${onAcct ? '<div class="inv-sign">Received by (signature) ______________________________________ Date ____________</div>' : ''}
+    <div class="inv-thanks">Thank you for your business!</div>`;
 }
 // Printed quote.
 function quoteHtml(q) {
