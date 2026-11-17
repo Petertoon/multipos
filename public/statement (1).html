@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account statement</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #000; background: #fff; margin: 0; font-size: 14px; }
+  .page { max-width: 760px; margin: 0 auto; padding: 28px 24px; }
+  .top { display: flex; justify-content: space-between; gap: 20px; }
+  h1 { margin: 0; font-size: 20px; } h2 { margin: 0; font-size: 18px; text-align: right; }
+  .box { border: 1px solid #000; padding: 10px 12px; margin-top: 18px; display: flex; justify-content: space-between; gap: 20px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  th, td { border-bottom: 1px solid #ccc; padding: 6px 4px; text-align: left; }
+  th { font-size: 12px; text-transform: uppercase; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .void td { color: #999; text-decoration: line-through; }
+  .due { font-size: 20px; font-weight: 800; }
+  .noprint { text-align: center; margin: 16px; } .noprint button { font: 15px system-ui; padding: 10px 18px; }
+  .top .cust { border: 1px solid #000; padding: 10px 12px; min-width: 240px; max-width: 340px; line-height: 1.45; }
+  .lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #555; margin-bottom: 3px; }
+  .box > div { flex: 1; } .amt { font-size: 16px; font-weight: 700; }
+  .note { margin-top: 14px; padding: 8px 12px; border-left: 4px solid #000; background: #f6f6f6; }
+  .sub { font-size: 12px; color: #444; } .muted { color: #666; }
+  .bar { max-width: 760px; margin: 0 auto; padding: 12px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #f4f5f3; border-bottom: 1px solid #ddd; }
+  .bar input { font: 14px system-ui; padding: 6px; } .bar .quick button { font: 13px system-ui; padding: 6px 10px; margin-right: 4px; }
+  .bar textarea { flex: 1 1 100%; font: 14px system-ui; padding: 8px; min-height: 48px; }
+  @media print { .noprint { display: none; } @page { margin: 12mm; } }
+</style>
+</head>
+<body>
+<div class="noprint bar">
+  <label>From <input type="date" id="from"></label>
+  <label>To <input type="date" id="to"></label>
+  <span class="quick"><button data-r="month">This month</button><button data-r="last">Last month</button><button data-r="year">This year</button><button data-r="all">All</button></span>
+  <textarea id="note" maxlength="1000" placeholder="Note on this statement (optional). It prints under the customer's details."></textarea>
+  <button onclick="print()">🖨 Print</button> <button onclick="close()">Close</button>
+</div>
+<div class="page" id="p">Loading…</div>
+<script src="/app.js"></script>
+<script>
+// Charge account statement: /statement?id=<customer id>&from=YYYY-MM-DD&to=YYYY-MM-DD
+const q = new URLSearchParams(location.search);
+const id = q.get('id');
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = new Date();
+$('#from').value = q.get('from') || ymd(new Date(today.getFullYear(), today.getMonth(), 1));
+$('#to').value = q.get('to') || ymd(today);
+const noteKey = 'mp_stmt_note_' + id;
+try { $('#note').value = localStorage.getItem(noteKey) || ''; } catch (e) { /* ok */ }
+const longDate = (v) => new Date(v + 'T12:00:00').toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+let me, st;
+function render() {
+  const c = st.customer;
+  const note = $('#note').value.trim();
+  const lines = st.activity.map((a) => `<tr class="${a.voided ? 'void' : ''}"><td>${new Date(a.created_at).toLocaleDateString()}</td>
+      <td>${a.kind === 'charge' ? `Invoice #${a.ref_id}${a.po_number ? ' · PO ' + esc(a.po_number) : ''}${a.job_address ? '<div class="sub">' + esc(a.job_address) + '</div>' : ''}`
+        : `Payment, thank you (${esc(PAY_NAMES[a.method] || a.method)}${a.check_number ? ' #' + esc(a.check_number) : ''})`}${a.voided ? ' (void)' : ''}
+        ${a.note ? '<div class="sub">Note: ' + esc(a.note) + '</div>' : ''}</td>
+      <td class="n">${a.kind === 'charge' ? money(a.amount_cents) : ''}</td><td class="n">${a.kind === 'payment' ? money(a.amount_cents) : ''}</td>
+      <td class="n">${balText(a.balance_cents)}</td></tr>`);
+  document.title = `Statement · ${c.name}`;
+  $('#p').innerHTML = `<div class="top">
+      <div class="cust"><div class="lbl">STATEMENT FOR</div><b>${esc(c.name)}</b>${c.company ? '<br>' + esc(c.company) : ''}${c.address ? '<br>' + esc(c.address).replace(/\n/g, '<br>') : ''}${c.phone ? '<br>' + esc(c.phone) : ''}${c.email ? '<br>' + esc(c.email) : ''}</div>
+      <div style="text-align:right">${me.business.logo_url ? `<img src="${esc(me.business.logo_url)}" alt="" style="max-height:60px;max-width:200px"><br>` : ''}<h1>${esc(me.business.name)}</h1>
+        <h2 style="margin-top:10px">ACCOUNT STATEMENT</h2>
+        <div>${longDate(st.from)} – ${longDate(st.to)}</div><div class="muted">Printed ${new Date().toLocaleDateString()}</div></div></div>
+    ${note ? `<div class="note"><b>Note:</b> ${esc(note).replace(/\n/g, '<br>')}</div>` : ''}
+    <div class="box">
+      <div>Previous balance<div class="amt">${balText(st.opening_cents)}</div></div>
+      <div>Charges<div class="amt">${money(st.charges_cents)}</div></div>
+      <div>Payments<div class="amt">${money(st.payments_cents)}</div></div>
+      <div style="text-align:right">${st.closing_cents < 0 ? 'Credit on account' : 'Balance due'} as of ${new Date(st.to + 'T12:00:00').toLocaleDateString()}<div class="due">${money(Math.abs(st.closing_cents))}</div>
+        ${c.credit_limit_cents != null ? `Credit limit ${money(c.credit_limit_cents)}` : ''}</div></div>
+    <table><thead><tr><th>Date</th><th>Description</th><th class="n">Charges</th><th class="n">Payments</th><th class="n">Balance</th></tr></thead>
+      <tbody><tr><td>${new Date(st.from + 'T12:00:00').toLocaleDateString()}</td><td>Previous balance</td><td></td><td></td><td class="n">${balText(st.opening_cents)}</td></tr>
+      ${lines.join('') || '<tr><td colspan="5">No account activity in these dates.</td></tr>'}</tbody></table>
+    <p style="margin-top:24px">Please include your name with your payment. Thank you for your business!</p>`;
+}
+async function load() {
+  if ($('#from').value > $('#to').value) { $('#p').textContent = 'The start date is after the end date.'; return; }
+  st = await api(`/api/customers/${encodeURIComponent(id)}/statement?from=${$('#from').value}&to=${$('#to').value}`);
+  history.replaceState(null, '', `?id=${encodeURIComponent(id)}&from=${$('#from').value}&to=${$('#to').value}`);
+  render();
+}
+$('#from').onchange = $('#to').onchange = () => load().catch((e) => { $('#p').textContent = e.message; });
+$('#note').oninput = () => { try { localStorage.setItem(noteKey, $('#note').value); } catch (e) { /* ok */ } if (st) render(); };
+document.querySelector('.quick').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const y = today.getFullYear(), m = today.getMonth();
+  const r = { month: [new Date(y, m, 1), today], last: [new Date(y, m - 1, 1), new Date(y, m, 0)], year: [new Date(y, 0, 1), today],
+    all: [new Date(2000, 0, 1), today] }[b.dataset.r];
+  $('#from').value = ymd(r[0]); $('#to').value = ymd(r[1]); $('#from').onchange();
+};
+(async () => { me = await api('/api/me'); await load(); })().catch((e) => { $('#p').textContent = e.message; });
+</script>
+</body>
+</html>
