@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quote</title>
+<link rel="stylesheet" href="/receipt.css">
+</head>
+<body>
+<div class="r" id="r">Loading…</div>
+<div class="noprint"><button onclick="print()">Print</button> <button onclick="close()">Close</button></div>
+<script src="/app.js"></script>
+<script>
+// Staff view: /quote?id=12 — printable price quote.
+(async () => {
+  const id = new URLSearchParams(location.search).get('id');
+  const q = await api('/api/quotes/' + encodeURIComponent(id));
+  document.title = `Quote #${q.id}`;
+  $('#r').innerHTML = quoteHtml(q);
+  setTimeout(() => print(), 300);
+})().catch((e) => { $('#r').textContent = e.message; });
+</script>
+</body>
+</html>
