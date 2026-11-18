@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ContractorPOS Checkout</title>
+<title>MultiPOS Checkout</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/theme.css">
 <style>
   body { height: 100vh; display: flex; flex-direction: column; }
   .wrap { flex: 1; display: grid; grid-template-columns: 1fr 340px; gap: 14px; padding: 14px; min-height: 0; }
@@ -26,7 +27,7 @@
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
   .tabs button { background: #fff; border: 1px solid var(--line); }
   .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; max-height: 36vh; overflow: auto; align-items: start; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; max-height: 36vh; overflow: auto; align-items: start; grid-auto-rows: max-content; flex: none; }
   .tile { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 10px; text-align: left; min-height: 70px; }
   .tile b { display: block; font-size: 15px; }
   .tile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; margin-bottom: 6px; background: #f1f3ef; }
@@ -115,13 +116,13 @@
   @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; } body { height: auto; } .grid { max-height: none; } }
 </style>
 </head>
-<body>
+<body class="cp">
 <div class="topbar">
-  <div class="brand"><img id="logo" alt="" hidden><span>ContractorPOS</span></div>
+  <a class="homebtn" id="homeBtn" hidden></a>
+  <div class="brand"><img id="logo" alt="" hidden><span>MultiPOS</span></div>
   <div class="biz" id="bizName"></div>
   <select id="registerSel" aria-label="Register"></select>
   <div class="spacer"></div>
-  <a href="/jobs" id="jobsLink" hidden>Job board</a>
   <a href="/checkout" class="active">Checkout</a>
   <a href="/admin" id="adminLink" hidden>Manage</a>
   <span id="userName" class="muted"></span>
@@ -475,7 +476,6 @@ async function start() {
   $('#bizName').textContent = me.business.name;
   if (me.business.logo_url) { $('#logo').src = me.business.logo_url; $('#logo').hidden = false; }
   $('#userName').textContent = me.user.name;
-  if (me.business.jobs_enabled) $('#jobsLink').hidden = false;
   if (me.user.role !== 'cashier') {
     $('#adminLink').hidden = false;
     const showCount = () => api('/api/pending/count').then((r) => {
