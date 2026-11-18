@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gift card</title>
+<link rel="stylesheet" href="/receipt.css">
+<style>
+  .code { font-size: 22px; font-weight: bold; letter-spacing: 2px; text-align: center; border: 2px dashed #000; padding: 10px; margin: 10px 0; }
+  .amt { font-size: 26px; font-weight: bold; text-align: center; }
+</style>
+</head>
+<body>
+<div class="r" id="r">Loading…</div>
+<div class="noprint"><button onclick="print()">Print</button> <button onclick="close()">Close</button></div>
+<script src="/app.js"></script>
+<script>
+// Staff view: /giftcard?code=GC-XXXX-XXXX — a slip to hand the customer.
+(async () => {
+  const code = new URLSearchParams(location.search).get('code');
+  const g = await api('/api/gift-cards/' + encodeURIComponent(code));
+  $('#r').innerHTML = `<div class="c"><h1>${esc(g.business_name)}</h1><div>GIFT CARD</div></div><hr>
+    <div class="code">${esc(g.code)}</div>
+    <div class="c">Balance</div><div class="amt">${money(g.balance_cents)}</div>
+    ${g.customer_name ? `<div class="c" style="margin-top:6px">For: ${esc(g.customer_name)}</div>` : ''}
+    <hr><div class="c">Issued ${fmtDateTime(g.created_at)}</div>
+    <div class="c" style="margin-top:6px">Show this number when you pay. Keep it safe; it works like cash.</div>`;
+  setTimeout(() => print(), 300);
+})().catch((e) => { $('#r').textContent = e.message; });
+</script>
+</body>
+</html>
