@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deposit slip</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #000; background: #fff; margin: 0; font-size: 14px; }
+  .page { max-width: 700px; margin: 0 auto; padding: 28px 24px; }
+  h1 { margin: 0; font-size: 22px; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; margin-top: 14px; border: 2px solid #000; padding: 12px; }
+  .meta b { display: block; font-size: 12px; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  th, td { border: 1px solid #000; padding: 7px 8px; text-align: left; }
+  th { background: #eee; font-size: 12px; text-transform: uppercase; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; width: 130px; }
+  tr.tot td { font-weight: 800; font-size: 16px; }
+  .sig { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .sig div { border-top: 1px solid #000; padding-top: 4px; font-size: 12px; }
+  .noprint { text-align: center; margin: 16px; } .noprint button { font: 15px system-ui; padding: 10px 18px; }
+  @media print { .noprint { display: none; } }
+</style>
+</head>
+<body>
+<div class="page" id="p">Loading…</div>
+<div class="noprint"><button onclick="print()">Print</button> <button onclick="close()">Close</button></div>
+<script src="/app.js"></script>
+<script>
+// Bank deposit slip: /deposit?id=<deposit id>
+(async () => {
+  const id = new URLSearchParams(location.search).get('id');
+  const d = await api('/api/deposits/' + encodeURIComponent(id));
+  document.title = `Deposit #${d.id}`;
+  $('#p').innerHTML = `<h1>DEPOSIT SLIP</h1>
+    <div class="meta">
+      <div><b>Business</b>${esc(d.business_name)}</div><div><b>Date</b>${new Date(d.created_at).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}</div>
+      <div><b>Location</b>${esc(d.location_name || 'All locations')}</div><div><b>Deposit #</b>${d.id}</div>
+      <div><b>Bank / account</b>${esc(d.deposit_account || '______________________')}</div><div><b>Prepared by</b>${esc(d.created_by_name || '')}</div>
+    </div>
+    <table><thead><tr><th>Currency & coin</th><th class="n">Amount</th></tr></thead>
+      <tbody><tr><td>Cash</td><td class="n">${money(d.cash_cents)}</td></tr></tbody></table>
+    <table><thead><tr><th>#</th><th>Check number</th><th>From</th><th class="n">Amount</th></tr></thead>
+      <tbody>${d.checks.map((c, i) => `<tr><td>${i + 1}</td><td>${esc(c.check_number || '')}</td><td>${esc(c.customer || '')}</td><td class="n">${money(c.amount_cents)}</td></tr>`).join('')
+        || '<tr><td colspan="4">No checks</td></tr>'}
+        <tr><td colspan="3"><b>Checks total (${d.check_count})</b></td><td class="n"><b>${money(d.checks_cents)}</b></td></tr></tbody></table>
+    <table><tbody>
+      <tr><td>Cash</td><td class="n">${money(d.cash_cents)}</td></tr>
+      <tr><td>Checks</td><td class="n">${money(d.checks_cents)}</td></tr>
+      <tr class="tot"><td>TOTAL DEPOSIT</td><td class="n">${money(d.cash_cents + d.checks_cents)}</td></tr></tbody></table>
+    ${d.cash_collected_cents !== d.cash_cents ? `<p>Cash collected since the last deposit was ${money(d.cash_collected_cents)}; ${money(d.cash_cents)} deposited
+      (${d.cash_collected_cents > d.cash_cents ? money(d.cash_collected_cents - d.cash_cents) + ' kept or short' : money(d.cash_cents - d.cash_collected_cents) + ' over'}).</p>` : ''}
+    ${d.note ? `<p>Note: ${esc(d.note)}</p>` : ''}
+    <div class="sig"><div>Prepared by</div><div>Bank teller</div></div>`;
+})().catch((e) => { $('#p').textContent = e.message; });
+</script>
+</body>
+</html>
