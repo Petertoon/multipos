@@ -167,7 +167,7 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone, receipt_reply_email FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone, receipt_reply_email, theme, home_link, CASE WHEN home_image IS NULL THEN NULL ELSE home_image_v END AS home_image_v FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
@@ -259,6 +259,10 @@ app.put('/api/business', ...biz, requireRole('owner'), wrap(async (req, res) => 
   if ('deposit_account' in req.body) {
     await pool.query('UPDATE businesses SET deposit_account=$1 WHERE id=$2',
       [text(req.body.deposit_account, 'Bank account', { required: false, max: 120 }) || null, req.user.business_id]);
+  }
+  if ('theme' in req.body) {
+    const th = ['ranch', 'dark'].includes(req.body.theme) ? req.body.theme : null;
+    await pool.query('UPDATE businesses SET theme=$1 WHERE id=$2', [th, req.user.business_id]);
   }
   if ('receipt_reply_email' in req.body) {
     const em = String(req.body.receipt_reply_email || '').trim().toLowerCase();
@@ -727,7 +731,7 @@ app.post('/api/registers/:id/checkout', ...biz, wrap(async (req, res) => {
 async function registerByPair(t) {
   const { rows } = await pool.query(
     `SELECT r.id, r.name, r.cart, r.location_id, l.tax_rate, l.name AS location_name, l.business_id, b.name AS business_name,
-            b.accent_color
+            b.accent_color, b.theme
        FROM registers r JOIN locations l ON l.id = r.location_id JOIN businesses b ON b.id = l.business_id
       WHERE r.pair_token = $1 AND r.active AND l.active AND b.active`, [String(t || '')]);
   if (!rows[0]) fail(404, 'This scanner link is no longer valid. Scan the QR code on the register again.');
@@ -737,7 +741,7 @@ const phoneView = (r) => ({ cart: r.cart, totals: r.totals });
 app.get('/api/pair/:token', wrap(async (req, res) => {
   const r = await registerByPair(req.params.token);
   res.json({ register_name: r.name, location_name: r.location_name, business_name: r.business_name,
-    accent_color: r.accent_color, cart: r.cart, totals: computeTotals(r.cart, r.tax_rate) });
+    accent_color: r.accent_color, theme: r.theme, cart: r.cart, totals: computeTotals(r.cart, r.tax_rate) });
 }));
 app.post('/api/pair/:token/scan', wrap(async (req, res) => {
   const r = await registerByPair(req.params.token);
@@ -787,6 +791,27 @@ async function sendProductImage(res, productId, businessId) {
     'X-Content-Type-Options': 'nosniff' });
   res.send(rows[0].image);
 }
+// Round button in the top-left corner: picture + web link, set per business in Settings.
+app.get('/api/business/home-image', ...biz, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT home_image, home_image_type FROM businesses WHERE id=$1 AND home_image IS NOT NULL', [req.user.business_id]);
+  if (!rows[0]) return res.status(404).end();
+  res.set({ 'Content-Type': rows[0].home_image_type, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
+  res.send(rows[0].home_image);
+}));
+app.put('/api/business/home-button', ...biz, requireRole('owner'), wrap(async (req, res) => {
+  let link = text(req.body.link, 'Web address', { required: false, max: 500 });
+  if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
+  if (link && !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(link)) fail(400, 'That web address does not look right');
+  await pool.query('UPDATE businesses SET home_link=$1 WHERE id=$2', [link || null, req.user.business_id]);
+  if (req.body.remove_image) {
+    await pool.query('UPDATE businesses SET home_image=NULL, home_image_type=NULL, home_image_v=home_image_v+1 WHERE id=$1', [req.user.business_id]);
+  } else if (req.body.image) {
+    const photo = photoFromBody(req.body.image);
+    await pool.query('UPDATE businesses SET home_image=$1, home_image_type=$2, home_image_v=home_image_v+1 WHERE id=$3', [photo.bytes, photo.type, req.user.business_id]);
+  }
+  res.json({ ok: true });
+}));
+
 app.get('/api/products/:id/image', ...biz, wrap(async (req, res) => {
   await sendProductImage(res, req.params.id, req.user.business_id);
 }));
