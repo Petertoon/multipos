@@ -1,0 +1,119 @@
+/* Looks for MultiPOS: "Classic" (default, no rules here), "Ranch" and "Dark".
+   Matches THEME-HANDOVER.md (shared with ContractorPOS and Peter's other programs).
+   Only screens with <body class="cp"> are themed. Receipts, invoices, statements and
+   customer pages stay plain white. Dark is screen-only, so printing is black on white. */
+
+/* ================= RANCH: parchment, tan, forest green, burgundy ================= */
+html[data-theme=ranch]:has(> body.cp) { background: #efe5cf; }
+html[data-theme=ranch] body.cp {
+  --bg: #efe5cf; --panel: #fbf7ee; --ink: #2b2417; --muted: #7a6a50; --line: #dccdb0;
+  --top: #2f5a2a; --accent: #2f5a2a; --green: #2f5a2a; --burg: #7f3b33; --owed: #8b2e24; --danger: #8b2e24; --card: #2f5a2a;
+  background: var(--bg); color: var(--ink);
+}
+:where(html[data-theme=ranch] body.cp) a { color: var(--green); }
+:where(html[data-theme=ranch] body.cp) button { background: #ece2cc; color: #2b2417; }
+:where(html[data-theme=ranch] body.cp) button.primary { background: var(--green); color: #fff; }
+:where(html[data-theme=ranch] body.cp) button.danger { background: var(--danger); color: #fff; }
+:where(html[data-theme=ranch] body.cp) button.ghost { background: #fbf7ee; border: 1px solid #cdbb98; }
+:where(html[data-theme=ranch] body.cp) button.wa { background: #25d366; color: #fff; }
+:where(html[data-theme=ranch] body.cp) :is(input, select, textarea) { background: #fff; color: #2b2417; border-color: #cdbb98; }
+:where(html[data-theme=ranch] body.cp) :is(input, select, textarea):focus { outline-color: var(--green); }
+html[data-theme=ranch] body.cp .topbar { background: linear-gradient(180deg, #e7d4ac, #d9c093); color: #2b2010; border-bottom: 1px solid #c4a874; }
+html[data-theme=ranch] body.cp .topbar .brand { color: var(--burg); }
+html[data-theme=ranch] body.cp .topbar .biz { color: #2b2010; }
+html[data-theme=ranch] body.cp .topbar :is(a, button.link) { color: #2b2010; }
+html[data-theme=ranch] body.cp .topbar :is(a, button.link):hover { background: rgba(127,59,51,.12); }
+html[data-theme=ranch] body.cp .topbar a.active { background: var(--burg); color: #f6ead6; border-radius: 99px; }
+html[data-theme=ranch] body.cp .topbar .homebtn { border-color: #7f3b33; }
+html[data-theme=ranch] body.cp .topbar select { background: #fbf7ee; color: #2b2417; border-color: #c4a874; }
+html[data-theme=ranch] body.cp :is(h1, h2) { color: var(--burg); }
+html[data-theme=ranch] body.cp :is(.modal, .modal h2) { color: #2b2417; }
+html[data-theme=ranch] body.cp .modal { background: #f4ecdb; }
+html[data-theme=ranch] body.cp .modal h2 { color: var(--burg); }
+html[data-theme=ranch] body.cp table.list { background: var(--panel); border: 1px solid #d8c9a8; }
+html[data-theme=ranch] body.cp table.list th { background: var(--green); color: #fff; }
+html[data-theme=ranch] body.cp table.list tbody tr:nth-child(even) td { background: #f7f0e1; }
+html[data-theme=ranch] body.cp :is(.pill, .acctpill) { background: #ead9b6; color: #3a2c17; }
+html[data-theme=ranch] body.cp .pill.off { background: #f3dcd6; color: var(--burg); }
+html[data-theme=ranch] body.cp .badge { background: var(--burg); color: #fff; }
+html[data-theme=ranch] body.cp #toast { background: #2b2417; color: #fff; }
+html[data-theme=ranch] body.cp #toast.bad { background: var(--burg); }
+html[data-theme=ranch] body.cp :is(.err, .expired, .late, .paysum .due b, .stat.refund b) { color: var(--owed); }
+/* panels and cards */
+html[data-theme=ranch] body.cp :is(.stat, .locbox, .settings, .pcard, .wabox, .phone, .cart, .totals, .panel, .auth) { background: var(--panel); border: 1px solid #ddd0b3; box-shadow: 0 1px 2px rgba(80,60,20,.08); }
+html[data-theme=ranch] body.cp .cart th, html[data-theme=ranch] body.cp tr.totrow td { background: var(--green); color: #fff; }
+html[data-theme=ranch] body.cp :is(.tile, .tabs button, .seg button, .seg2 button, .seg3 button, .periods button, .chip) { background: #fffaf0; border-color: #d8c9a8; color: #2b2417; }
+html[data-theme=ranch] body.cp :is(.tabs button.on, .seg button.on, .seg2 button.on, .seg3 button.on, .periods button.on) { background: var(--green); border-color: var(--green); color: #fff; }
+html[data-theme=ranch] body.cp .chip.set { background: #e3ead8; border-color: #9fb48d; color: #2f5a2a; }
+html[data-theme=ranch] body.cp .chip.acct { background: #f3e2b8; border-color: #cfa955; color: #5a3f05; }
+html[data-theme=ranch] body.cp .chip.fee { background: #f3ead6; }
+html[data-theme=ranch] body.cp .chip.quote, html[data-theme=ranch] body.cp .pay .split { background: #f3dcd6; border-color: #d9a99f; color: var(--burg); }
+html[data-theme=ranch] body.cp :is(.rentbtn, .rentpill, button.rentson) { background: #ead9b6; color: #5a3f05; }
+html[data-theme=ranch] body.cp .tile.rent { background: #f7ecd4; border-color: #cfa955; }
+html[data-theme=ranch] body.cp :is(.custform, .retcard, .bcline, .paidrow) { background: #f3ead6; }
+html[data-theme=ranch] body.cp :is(.banner, .warn, label.report) { background: #f3dcd6; color: #2b2417; }
+html[data-theme=ranch] body.cp tr.overdue td { background: #f3dcd6 !important; }
+html[data-theme=ranch] body.cp :is(.thumb, .pnone, .photo-preview, .tile img, .cthumb) { background-color: #ead9b6; }
+html[data-theme=ranch] body.cp .head { background: linear-gradient(180deg, #e7d4ac, #d9c093); color: #2b2010; }
+html[data-theme=ranch] body.cp .head span { color: #5a4a30; }
+html[data-theme=ranch] body.cp .head .help { background: #fbf7ee; color: #2b2010; }
+html[data-theme=ranch] body.cp .result { background: var(--panel); }
+
+/* ================= DARK: charcoal, lime green, gold (screen only) ================= */
+@media screen {
+  html[data-theme=dark]:has(> body.cp) { background: #121418; }
+  html[data-theme=dark] body.cp {
+    --bg: #121418; --panel: #1d2027; --ink: #f1f2f4; --muted: #9aa0aa; --line: #2e323b;
+    --top: #17191e; --danger: #ef5350; --lime: #7cc04a; --lime-text: #8fd16a; --gold: #d9a93a;
+    background: var(--bg); color: var(--ink);
+  }
+  :where(html[data-theme=dark] body.cp) a { color: var(--lime-text); }
+  :where(html[data-theme=dark] body.cp) button { background: #2a2e36; color: #f1f2f4; }
+  :where(html[data-theme=dark] body.cp) button.primary { background: var(--accent, #1f8f4e); color: #fff; }
+  :where(html[data-theme=dark] body.cp) button.danger { background: var(--danger); color: #fff; }
+  :where(html[data-theme=dark] body.cp) button.ghost { background: transparent; border: 1px solid #353a44; color: #f1f2f4; }
+  :where(html[data-theme=dark] body.cp) button.wa { background: #25d366; color: #fff; }
+  :where(html[data-theme=dark] body.cp) :is(input, select, textarea) { background: #16181d; color: #f1f2f4; border-color: #353a44; }
+  :where(html[data-theme=dark] body.cp) :is(input, textarea)::placeholder { color: #6f7580; }
+  html[data-theme=dark] body.cp input[type=date], html[data-theme=dark] body.cp input[type=time], html[data-theme=dark] body.cp input[type=datetime-local] { color-scheme: dark; }
+  html[data-theme=dark] body.cp .topbar { background: #17191e; border-bottom: 1px solid #2a2e36; color: #fff; }
+  html[data-theme=dark] body.cp .topbar .biz { color: var(--lime-text); }
+  html[data-theme=dark] body.cp .topbar a.active { background: #1f2a17; color: var(--lime-text); box-shadow: inset 0 0 0 1.5px var(--lime); }
+  html[data-theme=dark] body.cp .topbar .homebtn { border-color: var(--lime); }
+  html[data-theme=dark] body.cp .topbar select { background: #16181d; border-color: #353a44; }
+  html[data-theme=dark] body.cp :is(h2, h3) { color: var(--gold); text-transform: uppercase; letter-spacing: .06em; font-size: .95em; }
+  html[data-theme=dark] body.cp .modal { background: #1d2027; color: #f1f2f4; border: 1px solid #2e323b; }
+  html[data-theme=dark] body.cp table.list { background: var(--panel); border: 1px solid #2a2e36; }
+  html[data-theme=dark] body.cp :is(table.list th, .cart th) { background: #191b20; color: var(--gold); letter-spacing: .08em; }
+  html[data-theme=dark] body.cp tr.totrow td { background: #191b20; }
+  html[data-theme=dark] body.cp table.list tr.off td { color: #6f7580; }
+  html[data-theme=dark] body.cp :is(.pill, .acctpill) { background: #2a2e36; color: #e6e8ec; }
+  html[data-theme=dark] body.cp .pill.off { background: #3a1f1f; color: #ff8a80; }
+  html[data-theme=dark] body.cp #toast { background: #2a2e36; }
+  html[data-theme=dark] body.cp #toast.bad { background: var(--danger); }
+  html[data-theme=dark] body.cp :is(.err, .expired, .late, .paysum .due b, .stat.refund b) { color: #ff5a5a; }
+  html[data-theme=dark] body.cp .ontime { color: var(--lime-text); } html[data-theme=dark] body.cp .early { color: #9cc8ff; }
+  /* panels and cards */
+  html[data-theme=dark] body.cp :is(.stat, .locbox, .settings, .pcard, .wabox, .phone, .cart, .totals, .panel, .auth, .result) { background: var(--panel); border: 1px solid #2a2e36; }
+  html[data-theme=dark] body.cp :is(.tile, .tabs button, .seg button, .seg2 button, .seg3 button, .periods button, .chip) { background: #22262e; border-color: #30353f; color: #f1f2f4; }
+  html[data-theme=dark] body.cp .tile b, html[data-theme=dark] body.cp .tile span { color: inherit; }
+  html[data-theme=dark] body.cp :is(.tabs button.on, .seg button.on, .seg2 button.on, .seg3 button.on, .periods button.on) { background: #1f2a17; color: var(--lime-text); border-color: var(--lime); box-shadow: inset 0 0 0 1px var(--lime); }
+  html[data-theme=dark] body.cp .periods button.on span { color: var(--lime-text); }
+  html[data-theme=dark] body.cp .chip.set { background: #182a3f; border-color: #2f4f75; color: #9cc8ff; }
+  html[data-theme=dark] body.cp .chip.acct { background: #3a2f12; border-color: #6b5520; color: #f0d27a; }
+  html[data-theme=dark] body.cp .chip.fee { background: #1b1e24; }
+  html[data-theme=dark] body.cp .chip.quote, html[data-theme=dark] body.cp .pay .split { background: #2b2040; border-color: #4a3870; color: #d6b4ff; }
+  html[data-theme=dark] body.cp :is(.rentbtn, .rentpill, button.rentson) { background: #3a2a12; color: #f0b46a; }
+  html[data-theme=dark] body.cp .tile.rent { background: #2a2216; border-color: #6b5228; }
+  html[data-theme=dark] body.cp .tile.rent span { color: #f0b46a; }
+  html[data-theme=dark] body.cp button.qboon { background: #1f3a24; color: #8fe3a5; }
+  html[data-theme=dark] body.cp :is(.custform, .retcard, .bcline) { background: #1b1e24; }
+  html[data-theme=dark] body.cp .paidrow { background: #1f3a24; color: #8fe3a5; }
+  html[data-theme=dark] body.cp :is(.banner, .warn, label.report) { background: #3a2f12; color: #f0d27a; }
+  html[data-theme=dark] body.cp tr.overdue td { background: #3a1f1f !important; }
+  html[data-theme=dark] body.cp :is(.thumb, .pnone, .photo-preview, .tile img, .cthumb) { background-color: #2a2e36; }
+  html[data-theme=dark] body.cp .totals .money, html[data-theme=dark] body.cp .tile .price { color: var(--lime-text); }
+  html[data-theme=dark] body.cp .head { background: #17191e; border-bottom: 1px solid #2a2e36; }
+  html[data-theme=dark] body.cp .head span { color: var(--lime-text); }
+  html[data-theme=dark] body.cp .giftcode { border-color: #6f7580; }
+}
