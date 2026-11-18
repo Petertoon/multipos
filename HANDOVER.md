@@ -1,6 +1,7 @@
+[HANDOVER (29).md](https://github.com/user-attachments/files/35052743/HANDOVER.29.md)
 # MultiPOS — Build Handover
 
-Last updated: 2026-11-13 · Current version: **v1.11.0**
+Last updated: 2026-11-13 · Current version: **v1.13.0**
 
 This document explains how MultiPOS was built, so a new project (a **contractor POS**) can start from the same foundation. Attach this file and the latest `multipos-v1.10.zip` to the new conversation.
 
@@ -60,6 +61,7 @@ multipos/
                    WhatsApp, text and email send dialogs.
     hours.js       Business hours + rental due-time math. Shared by server AND browser.
     style.css      Shared styles.
+    theme.css      Ranch and Dark looks (body class="cp" screens only).
     checkout.html  The register screen (cart, pay, split pay, customers, PO/job site, fees,
                    quotes, rentals, phone-scanner QR, WhatsApp box).
     admin.html     "Manage" screens: Businesses (platform admin), Products, Pending items,
@@ -114,6 +116,8 @@ Tables: `businesses`, `locations`, `registers`, `users`, `sessions`, `products`,
 | v1.9 | **Text and email receipts** |
 | v1.10 | **Business hours per location**; rental time skips closed hours |
 | v1.11 | **Pickup / Delivery** on sales, **fuel charge by the gallon**, **full-page invoice** (customer details top left), **notes on invoices and statements**, **statements for any date range** |
+| v1.12 | **Look of the program** (Settings): Classic, **Ranch** or **Dark**, same colors as ContractorPOS (`public/theme.css`). Printouts and customer pages stay white. |
+| v1.13 | **Round button (top left)**: a picture in a circle that opens the store's website (Settings). |
 
 ---
 
