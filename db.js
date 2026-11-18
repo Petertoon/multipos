@@ -300,6 +300,15 @@ ALTER TABLE sales ADD COLUMN IF NOT EXISTS fulfillment TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS invoice_note TEXT;
 ALTER TABLE quotes ADD COLUMN IF NOT EXISTS fulfillment TEXT;
 
+-- ===== Look of the program: NULL = classic, 'ranch', 'dark' =====
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS theme TEXT;
+
+-- ===== Round button, top left: a picture that links to a website =====
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_link TEXT;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_image BYTEA;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_image_type TEXT;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_image_v INT NOT NULL DEFAULT 0;
+
 -- ===== Email receipts =====
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS receipt_reply_email TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_emailed_to TEXT;
