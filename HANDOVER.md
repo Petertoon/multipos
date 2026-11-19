@@ -1,7 +1,7 @@
-[HANDOVER (29).md](https://github.com/user-attachments/files/35052743/HANDOVER.29.md)
+[HANDOVER (34).md](https://github.com/user-attachments/files/35089470/HANDOVER.34.md)
 # MultiPOS — Build Handover
 
-Last updated: 2026-11-13 · Current version: **v1.13.0**
+Last updated: 2026-11-13 · Current version: **v1.15.0**
 
 This document explains how MultiPOS was built, so a new project (a **contractor POS**) can start from the same foundation. Attach this file and the latest `multipos-v1.10.zip` to the new conversation.
 
@@ -118,6 +118,8 @@ Tables: `businesses`, `locations`, `registers`, `users`, `sessions`, `products`,
 | v1.11 | **Pickup / Delivery** on sales, **fuel charge by the gallon**, **full-page invoice** (customer details top left), **notes on invoices and statements**, **statements for any date range** |
 | v1.12 | **Look of the program** (Settings): Classic, **Ranch** or **Dark**, same colors as ContractorPOS (`public/theme.css`). Printouts and customer pages stay white. |
 | v1.13 | **Round button (top left)**: a picture in a circle that opens the store's website (Settings). |
+| v1.14 | **Support access codes**: the platform admin needs a one-time code from the owner (emailed, or made in Settings) to open a store; access lasts 4 hours; every visit is logged for the owner; support can't add logins or change passwords inside a store. First 3 days after a store is created need no code (setup). |
+| v1.15 | **Account recovery**: backup email (required for owners and platform admins, asked when changing password), **Forgot password?** link on sign-in emails a 30-minute reset link to the login and backup emails (`reset.html`), change notices emailed, support codes can go to the main, backup or both emails. |
 
 ---
 
