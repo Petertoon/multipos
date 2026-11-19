@@ -124,3 +124,13 @@ module.exports = function emailReceipts(app, h) {
   }));
 };
 module.exports.configured = configured;
+// Plain email from MultiPOS itself (e.g. support access codes).
+module.exports.sendEmail = async function sendEmail({ to, subject, text, html, fromName = 'MultiPOS' }) {
+  if (!configured()) throw new Error('Email is not set up on this server (RESEND_API_KEY).');
+  const resp = await fetch(API_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: `${fromName} <${FROM()}>`, to: [to], subject, text, html }),
+  });
+  if (!resp.ok) { const b = await resp.json().catch(() => ({})); throw new Error('The email service said: ' + (b.message || resp.status)); }
+};
