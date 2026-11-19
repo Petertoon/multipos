@@ -1261,6 +1261,32 @@ app.get('/api/customers/:id', ...biz, wrap(async (req, res) => {
     `SELECT id, created_at, total_cents, status, po_number FROM quotes WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50`, [req.params.id]);
   res.json({ ...c.rows[0], activity: act.rows, sales: sales.rows, quotes: quotes.rows });
 }));
+// One customer's invoices for a date range, with an optional search (invoice #, PO, job site, note).
+app.get('/api/customers/:id/sales', ...biz, wrap(async (req, res) => {
+  const c = (await pool.query(`SELECT c.id, c.name, c.company, c.phone, c.email, c.address, c.charge_account, COALESCE(b.time_zone,'America/Chicago') AS tz
+      FROM customers c JOIN businesses b ON b.id=c.business_id WHERE c.id=$1 AND c.business_id=$2`, [req.params.id, req.user.business_id])).rows[0];
+  if (!c) fail(404, 'Customer not found');
+  const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
+  const from = day(req.query.from) || '1970-01-01', to = day(req.query.to) || '2999-12-31';
+  const params = [c.id, req.user.business_id, from, to, c.tz];
+  let where = `s.customer_id = $1 AND s.business_id = $2 AND (s.created_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date`;
+  const q = String(req.query.q || '').trim().slice(0, 100);
+  if (q) {
+    params.push('%' + q.replace(/[%_\\]/g, '\\$&') + '%'); const like = `$${params.length}`;
+    params.push(/^#?\d{1,9}$/.test(q) ? Number(q.replace(/\D/g, '')) : null); const num = `$${params.length}`;
+    where += ` AND (s.id = ${num}::int OR s.po_number ILIKE ${like} OR s.job_address ILIKE ${like} OR s.invoice_note ILIKE ${like})`;
+  }
+  const r = await pool.query(`SELECT s.id, s.created_at, s.subtotal_cents, s.tax_cents, s.total_cents, s.payment_method, s.voided, s.po_number,
+      s.job_address, s.fulfillment, s.invoice_note,
+      COALESCE((SELECT sum(p.amount_cents) FROM sale_payments p WHERE p.sale_id = s.id AND p.method = 'account'), 0)::int AS on_account_cents,
+      (SELECT json_agg(json_build_object('method', p.method, 'amount_cents', p.amount_cents) ORDER BY p.id) FROM sale_payments p WHERE p.sale_id = s.id) AS payments
+    FROM sales s WHERE ${where} ORDER BY s.created_at DESC LIMIT 1000`, params);
+  const live = r.rows.filter((s) => !s.voided);
+  delete c.tz;
+  res.json({ customer: c, from: day(req.query.from), to: day(req.query.to), sales: r.rows,
+    totals: { n: live.length, total: live.reduce((a, s) => a + s.total_cents, 0), tax: live.reduce((a, s) => a + s.tax_cents, 0),
+      on_account: live.reduce((a, s) => a + s.on_account_cents, 0) } });
+}));
 app.post('/api/customers', ...biz, wrap(async (req, res) => {
   const f = customerFields(req.body, isManager(req.user));
   const r = await pool.query(
@@ -1678,10 +1704,27 @@ app.get('/api/sales', ...managers, wrap(async (req, res) => {
   const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : null;
   const tz = /^[A-Za-z_]+\/[A-Za-z_]+$/.test(req.query.tz || '') ? req.query.tz : 'America/Chicago';
   const params = [req.user.business_id, from || '1970-01-01', to || '2999-12-31', tz];
-  let where = `s.business_id = $1 AND (s.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`;
+  // Search (customer, company, phone, invoice #, PO, job site) looks through all dates.
+  const q = String(req.query.q || '').trim().slice(0, 100);
+  let where = q ? 's.business_id = $1 AND $2::date IS NOT NULL AND $3::date IS NOT NULL AND $4::text IS NOT NULL'
+    : `s.business_id = $1 AND (s.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`;
   if (req.query.location_id) { params.push(req.query.location_id); where += ` AND s.location_id = $${params.length}`; }
+  if (q) {
+    params.push('%' + q.replace(/[%_\\]/g, '\\$&') + '%');
+    const like = `$${params.length}`;
+    const digits = q.replace(/\D/g, '');
+    params.push(/^#?\d{1,9}$/.test(q) ? Number(digits) : null);
+    const num = `$${params.length}`;
+    params.push(digits.length >= 4 ? '%' + digits + '%' : null);
+    const ph = `$${params.length}`;
+    where += ` AND (s.id = ${num}::int OR s.po_number ILIKE ${like} OR s.customer_name ILIKE ${like} OR s.job_address ILIKE ${like}
+      OR EXISTS (SELECT 1 FROM customers c WHERE c.id = s.customer_id AND (c.name ILIKE ${like} OR c.company ILIKE ${like}
+        OR (${ph}::text IS NOT NULL AND regexp_replace(COALESCE(c.phone,''), '\\D', '', 'g') LIKE ${ph})))
+      OR (${ph}::text IS NOT NULL AND regexp_replace(COALESCE(s.customer_phone,''), '\\D', '', 'g') LIKE ${ph}))`;
+  }
   const list = await pool.query(
     `SELECT s.id, s.created_at, s.total_cents, s.tax_cents, s.subtotal_cents, s.payment_method, s.voided,
+            s.customer_id, s.customer_name, s.po_number,
             l.name AS location_name, r.name AS register_name, u.name AS cashier,
             (SELECT json_agg(json_build_object('method', p.method, 'amount_cents', p.amount_cents) ORDER BY p.id)
                FROM sale_payments p WHERE p.sale_id = s.id) AS payments
@@ -1698,7 +1741,7 @@ app.get('/api/sales', ...managers, wrap(async (req, res) => {
       WHERE ${where} AND NOT s.voided GROUP BY p.method`, params);
   // Rental refunds in the same period (cash ones come out of the drawer).
   const rp = [req.user.business_id, params[1], params[2], params[3]];
-  let rwhere = `f.business_id = $1 AND (f.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`;
+  let rwhere = `f.business_id = $1 AND (f.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date${q ? ' AND false' : ''}`;
   if (req.query.location_id) { rp.push(req.query.location_id); rwhere += ` AND f.location_id = $${rp.length}`; }
   const ref = await pool.query(
     `SELECT f.method, count(*)::int AS n, sum(f.amount_cents)::bigint AS total FROM refunds f WHERE ${rwhere} GROUP BY f.method`, rp);
