@@ -472,7 +472,7 @@ let me, registerId, state = { cart: [], totals: {} }, products = [], category = 
 async function start() {
   me = await api('/api/me');
   if (!me.business) { location.href = '/admin#businesses'; return; }
-  applyBrand(me.business);
+  applyBrand(me.business); applyHomeButton(me.platform);
   $('#bizName').textContent = me.business.name;
   if (me.business.logo_url) { $('#logo').src = me.business.logo_url; $('#logo').hidden = false; }
   $('#userName').textContent = me.user.name;
