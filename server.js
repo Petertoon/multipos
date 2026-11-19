@@ -33,6 +33,8 @@ const token = (n = 24) => crypto.randomBytes(n).toString('hex');
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const fail = (status, msg) => { throw new HttpError(status, msg); };
+// Every :id in a route must be a whole number. Anything else ("null", "abc") is a clean 404, not a database error.
+app.param('id', (req, res, next, id) => (/^\d{1,9}$/.test(id) ? next() : next(new HttpError(404, 'Not found'))));
 
 function cents(value, label = 'Amount') {
   const n = Math.round(Number(value));
