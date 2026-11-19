@@ -1001,13 +1001,13 @@ async function showSettings() {
       <label>Bank & account for deposit slips (e.g. First Bank · acct ending 1234)</label><input id="bDep" value="${esc(me.business.deposit_account || '')}" placeholder="Optional">
       ${me.business.rentals_enabled ? `<label>Rentals: a half day is how many hours?</label><input id="bHalf" type="number" min="1" max="12" value="${me.business.half_day_hours}">` : ''}
       <button class="primary" style="margin-top:14px" id="saveBiz">Save business</button></div>` : ''}
-    ${isOwner ? `<div class="settings"><h2 style="margin-top:0">Round button (top left)</h2>
-      <p class="muted" style="margin-top:0">A picture in a circle at the top left of every screen. Tapping it opens your website.</p>
+    ${me.user.role === 'admin' && !me.business ? `<div class="settings"><h2 style="margin-top:0">Round button (top left, all accounts)</h2>
+      <p class="muted" style="margin-top:0">A picture in a circle at the top left of every store's screens. Tapping it opens your website. Only platform admins can change it.</p>
       <div style="display:flex;gap:14px;align-items:center">
-        <div class="homeprev" id="hPrev">${me.business.home_image_v != null ? `<img src="/api/business/home-image?v=${me.business.home_image_v}" alt="">` : 'No picture'}</div>
-        <div><button type="button" id="hPick">Choose picture…</button> <button type="button" class="ghost" id="hRemove" ${me.business.home_image_v != null ? '' : 'hidden'}>Remove picture</button>
+        <div class="homeprev" id="hPrev">${me.platform.home_image_v != null ? `<img src="/api/platform/home-image?v=${me.platform.home_image_v}" alt="">` : 'No picture'}</div>
+        <div><button type="button" id="hPick">Choose picture…</button> <button type="button" class="ghost" id="hRemove" ${me.platform.home_image_v != null ? '' : 'hidden'}>Remove picture</button>
           <input type="file" id="hFile" accept="image/*" hidden><div class="muted" style="font-size:13px;margin-top:6px">A square picture or logo looks best.</div></div></div>
-      <label>Web address it opens</label><input id="hLink" value="${esc(me.business.home_link || '')}" placeholder="lokaalhub.com">
+      <label>Web address it opens</label><input id="hLink" value="${esc(me.platform.home_link || '')}" placeholder="lokaalhub.com">
       <button class="primary" style="margin-top:14px" id="saveHome">Save round button</button></div>` : ''}
     ${me.user.role === 'owner' ? `<div class="settings"><h2 style="margin-top:0">🔒 Support access</h2>
       <p class="muted" style="margin-top:0">MultiPOS support can only open your account with a one-time code from you. When you ask for help,
@@ -1022,7 +1022,7 @@ async function showSettings() {
       <label>New password (8+ characters, leave blank to keep it)</label><input id="pNew" type="password" autocomplete="new-password">
       <label>Current password (needed to save)</label><input id="pCur" type="password" autocomplete="current-password">
       <button class="primary" style="margin-top:14px" id="savePw">Save</button></div>`;
-  if (isOwner) {
+  if ($('#saveHome')) {
     let hImage = null, hRemove = false;
     $('#hPick').onclick = () => $('#hFile').click();
     $('#hFile').onchange = async () => {
@@ -1032,7 +1032,7 @@ async function showSettings() {
     };
     $('#hRemove').onclick = () => { hImage = null; hRemove = true; $('#hPrev').textContent = 'No picture'; $('#hRemove').hidden = true; };
     $('#saveHome').onclick = async () => {
-      try { await api('/api/business/home-button', { link: $('#hLink').value.trim(), image: hImage, remove_image: hRemove }, 'PUT');
+      try { await api('/api/admin/home-button', { link: $('#hLink').value.trim(), image: hImage, remove_image: hRemove }, 'PUT');
         toast('Saved'); setTimeout(() => location.reload(), 600); } catch (e) { toast(e.message, 'bad'); }
     };
   }
@@ -1081,6 +1081,7 @@ function route() {
   role = me.user.role === 'admin' ? 'owner' : me.user.role;
   if (me.user.role === 'cashier') { location.href = '/checkout'; return; }
   if (me.business) { applyBrand(me.business); $('#bizName').textContent = me.business.name; }
+  applyHomeButton(me.platform);
   if (['owner', 'admin'].includes(me.user.role) && !me.user.backup_email) $('#bakNag').hidden = false;
   if (me.user.role === 'admin' && me.business) {
     $('#actingBanner').hidden = false; $('#actingName').textContent = me.business.name;
