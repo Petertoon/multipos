@@ -344,6 +344,17 @@ CREATE TABLE IF NOT EXISTS password_resets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ===== Platform-wide settings (one row), set by the platform admin =====
+-- The round button at the top left of every account's screens: a picture + web link.
+CREATE TABLE IF NOT EXISTS platform_settings (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  home_link TEXT,
+  home_image BYTEA,
+  home_image_type TEXT,
+  home_image_v INT NOT NULL DEFAULT 0
+);
+INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 -- ===== Email receipts =====
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS receipt_reply_email TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_emailed_to TEXT;
