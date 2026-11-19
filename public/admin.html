@@ -64,8 +64,12 @@
   <span id="nav"></span>
   <button class="link" onclick="logout()">Log out</button>
 </div>
+<div class="banner" id="bakNag" hidden>
+  <span>🔒 Add a <b>backup email</b> so you can get back into your account if you forget your password or lose your email.</span>
+  <button onclick="location.hash='settings'; setTimeout(() => { const m = document.getElementById('mySec'); if (m) m.scrollIntoView(); document.getElementById('pBak')?.focus(); }, 300)">Add it now</button>
+</div>
 <div class="banner" id="actingBanner" hidden>
-  <span>You are working inside <b id="actingName"></b> as platform administrator.</span>
+  <span>You are working inside <b id="actingName"></b> as platform administrator<span id="actingLeft"></span>.</span>
   <button onclick="exitBusiness()">Back to all businesses</button>
 </div>
 <main id="view"></main>
@@ -243,13 +247,58 @@ async function showBusinesses() {
       if (!on && !confirm('Turn off Rentals for this business? Rental screens will be hidden. Nothing is deleted.')) return;
       await api('/api/admin/businesses/' + rt.dataset.rentals, { rentals_enabled: on }, 'PUT'); showBusinesses(); return;
     }
-    if (en) { await api('/api/admin/enter/' + en.dataset.enter, {}); location.hash = 'products'; location.reload(); }
+    if (en) { openAccess(Number(en.dataset.enter)); return; }
     if (tg) {
       const turnOn = tg.dataset.active !== 'true';
       if (!turnOn && !confirm('Turn off this business? Its employees will not be able to log in.')) return;
       await api('/api/admin/businesses/' + tg.dataset.toggle, { active: turnOn }, 'PUT'); showBusinesses();
     }
   };
+}
+// Opening a business needs a code from its owner (emailed, or made by the owner in Settings).
+async function openAccess(id) {
+  let back = $('#accessModal');
+  if (!back) {
+    back = document.createElement('div'); back.className = 'modal-back'; back.id = 'accessModal';
+    back.innerHTML = `<form class="modal"><h2>🔒 Open <span data-name></span></h2>
+      <p class="muted" style="margin-top:0" data-why></p>
+      <div data-setup hidden class="banner" style="margin:0 0 10px">This business is still in its setup days, so no code is needed yet.</div>
+      <div data-sendrow style="display:flex;gap:8px;flex-wrap:wrap"><select data-to style="flex:1 1 100%"></select>
+        <button type="button" class="ghost" data-send>✉️ Email a code</button></div>
+      <div class="muted" data-sent style="font-size:13px;margin-top:6px"></div>
+      <label>Code from the owner</label>
+      <input data-code inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="6-digit code" style="font-size:24px;letter-spacing:6px;text-align:center">
+      <div class="err" data-err></div>
+      <div class="actions"><button type="button" class="ghost" data-x>Cancel</button><button class="primary" data-go>Open business</button></div></form>`;
+    document.body.appendChild(back);
+    back.querySelector('[data-x]').onclick = () => back.classList.remove('open');
+  }
+  const q = (k) => back.querySelector(`[data-${k}]`);
+  q('err').textContent = ''; q('sent').textContent = ''; q('code').value = '';
+  let info;
+  try { info = await api('/api/admin/access/' + id); } catch (e) { toast(e.message, 'bad'); return; }
+  q('name').textContent = info.name;
+  q('why').innerHTML = `To protect each store's information, the owner gives you a one-time code. Access lasts up to ${info.hours} hours, and the owner can see every visit in their Settings.`
+    + (info.can_email ? '' : `<br><b>Email isn't available${info.owner_email ? ' on this server' : ' (no owner email)'}.</b> Ask the owner to make a code in Settings → Support access and read it to you.`);
+  q('setup').hidden = !info.in_setup;
+  q('sendrow').hidden = !info.can_email;
+  q('to').innerHTML = `<option value="main">To the owner's email (${esc(info.owner_email || '')})</option>`
+    + (info.backup_email ? `<option value="backup">To the backup email (${esc(info.backup_email)})</option><option value="both">To both emails</option>` : '');
+  q('send').disabled = false;
+  q('send').onclick = async () => {
+    q('send').disabled = true; q('err').textContent = '';
+    try { const r = await api(`/api/admin/access/${id}/send`, { to: q('to').value }); q('sent').textContent = `Code sent to ${r.sent_to}. It works for 15 minutes. Ask the owner to read it to you.`; q('code').focus(); }
+    catch (e) { q('err').textContent = e.message; }
+    finally { setTimeout(() => { q('send').disabled = false; }, 20000); }
+  };
+  back.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault(); q('err').textContent = '';
+    const code = q('code').value.replace(/\D/g, '');
+    if (!code && !info.in_setup) { q('err').textContent = 'Enter the 6-digit code from the owner'; return; }
+    try { await api('/api/admin/enter/' + id, { code }); location.hash = 'products'; location.reload(); }
+    catch (err) { q('err').textContent = err.message; }
+  };
+  back.classList.add('open'); q('code').focus();
 }
 async function exitBusiness() { await api('/api/admin/exit', {}); location.hash = 'businesses'; location.reload(); }
 
@@ -914,10 +963,19 @@ async function showSettings() {
           <input type="file" id="hFile" accept="image/*" hidden><div class="muted" style="font-size:13px;margin-top:6px">A square picture or logo looks best.</div></div></div>
       <label>Web address it opens</label><input id="hLink" value="${esc(me.business.home_link || '')}" placeholder="lokaalhub.com">
       <button class="primary" style="margin-top:14px" id="saveHome">Save round button</button></div>` : ''}
-    <div class="settings"><h2 style="margin-top:0">My password</h2>
-      <label>Current password</label><input id="pCur" type="password" autocomplete="current-password">
-      <label>New password (8+ characters)</label><input id="pNew" type="password" autocomplete="new-password">
-      <button class="primary" style="margin-top:14px" id="savePw">Change password</button></div>`;
+    ${me.user.role === 'owner' ? `<div class="settings"><h2 style="margin-top:0">🔒 Support access</h2>
+      <p class="muted" style="margin-top:0">MultiPOS support can only open your account with a one-time code from you. When you ask for help,
+        support emails a code to you, or you can make one here and read it to them. Each code works once, for 15 minutes.</p>
+      <button type="button" id="supCode">Make a code for support</button>
+      <div id="supShow" hidden style="margin:12px 0;font-size:34px;font-weight:800;letter-spacing:8px"></div>
+      <div class="formhead">Who opened your account</div><div id="supLog" class="muted">Loading…</div></div>` : ''}
+    <div class="settings" id="mySec"><h2 style="margin-top:0">My login & backup email</h2>
+      <p class="muted" style="margin-top:0">Login: <b>${esc(me.user.email)}</b>. If you forget your password or lose that email, a reset link goes to your backup email too.</p>
+      <label>Backup email ${['owner', 'admin'].includes(me.user.role) ? '(required)' : '(optional)'}</label>
+      <input id="pBak" type="email" value="${esc(me.user.backup_email || '')}" placeholder="A different email you can always get into">
+      <label>New password (8+ characters, leave blank to keep it)</label><input id="pNew" type="password" autocomplete="new-password">
+      <label>Current password (needed to save)</label><input id="pCur" type="password" autocomplete="current-password">
+      <button class="primary" style="margin-top:14px" id="savePw">Save</button></div>`;
   if (isOwner) {
     let hImage = null, hRemove = false;
     $('#hPick').onclick = () => $('#hFile').click();
@@ -932,13 +990,28 @@ async function showSettings() {
         toast('Saved'); setTimeout(() => location.reload(), 600); } catch (e) { toast(e.message, 'bad'); }
     };
   }
+  if (me.user.role === 'owner') {
+    const loadLog = async () => {
+      const r = await api('/api/support/log');
+      $('#supLog').innerHTML = r.log.length ? `<table class="list"><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${r.log.map((l) =>
+        `<tr><td>${fmtDateTime(l.created_at)}</td><td>${esc(l.user_name || '')}</td><td>${esc(l.action)}</td></tr>`).join('')}</tbody></table>`
+        : 'Nobody from support has opened your account.';
+    };
+    loadLog().catch((e) => { $('#supLog').textContent = e.message; });
+    $('#supCode').onclick = async () => {
+      try { const r = await api('/api/support/code', {}); $('#supShow').hidden = false;
+        $('#supShow').innerHTML = `${r.code.slice(0, 3)} ${r.code.slice(3)}<div class="muted" style="font-size:13px;letter-spacing:0;font-weight:400">Read this to support. It works once, for ${r.minutes} minutes.</div>`;
+        loadLog(); } catch (e) { toast(e.message, 'bad'); }
+    };
+  }
   if (isOwner) $('#saveBiz').onclick = async () => {
     try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value,
       half_day_hours: $('#bHalf') ? $('#bHalf').value : null, deposit_account: $('#bDep').value, receipt_reply_email: $('#bReply').value, theme: $('#bTheme').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
     catch (e) { toast(e.message, 'bad'); }
   };
   $('#savePw').onclick = async () => {
-    try { await api('/api/me/password', { current: $('#pCur').value, password: $('#pNew').value }); toast('Password changed'); $('#pCur').value = $('#pNew').value = ''; }
+    try { const r = await api('/api/me/password', { current: $('#pCur').value, password: $('#pNew').value, backup_email: $('#pBak').value });
+      me.user.backup_email = r.backup_email; $('#bakNag').hidden = true; toast('Saved'); $('#pCur').value = $('#pNew').value = ''; }
     catch (e) { toast(e.message, 'bad'); }
   };
 }
@@ -962,7 +1035,11 @@ function route() {
   role = me.user.role === 'admin' ? 'owner' : me.user.role;
   if (me.user.role === 'cashier') { location.href = '/checkout'; return; }
   if (me.business) { applyBrand(me.business); $('#bizName').textContent = me.business.name; }
-  if (me.user.role === 'admin' && me.business) { $('#actingBanner').hidden = false; $('#actingName').textContent = me.business.name; }
+  if (['owner', 'admin'].includes(me.user.role) && !me.user.backup_email) $('#bakNag').hidden = false;
+  if (me.user.role === 'admin' && me.business) {
+    $('#actingBanner').hidden = false; $('#actingName').textContent = me.business.name;
+    if (me.acting_until) $('#actingLeft').textContent = ` until ${new Date(me.acting_until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
   window.addEventListener('hashchange', route);
   route();
 })().catch((e) => toast(e.message, 'bad'));
