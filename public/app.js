@@ -33,20 +33,18 @@ function toast(msg, kind = 'ok') {
 }
 // Look of the program (theme.css): 'classic' (default), 'ranch' or 'dark'. Remembered so pages don't flash.
 try { document.documentElement.dataset.theme = localStorage.getItem('mp_theme') || 'classic'; } catch (e) { /* ok */ }
-// Round button (top left): the store's picture, linking to its website. Hidden until one is set.
-function applyHomeButton(business) {
+// Round button (top left) on every account: the platform admin's picture and website link (me.platform).
+function applyHomeButton(p) {
   const a = document.getElementById('homeBtn');
   if (!a) return;
-  const has = business && (business.home_image_v != null || business.home_link);
+  const has = p && (p.home_image_v != null || p.home_link);
   a.hidden = !has;
   if (!has) return;
-  if (business.home_link) { a.href = business.home_link; a.target = '_blank'; a.rel = 'noopener'; a.title = business.home_link; }
+  if (p.home_link) { a.href = p.home_link; a.target = '_blank'; a.rel = 'noopener'; a.title = p.home_link; }
   else { a.removeAttribute('href'); a.title = ''; }
-  a.innerHTML = business.home_image_v != null ? `<img src="/api/business/home-image?v=${business.home_image_v}" alt="">`
-    : `<span>${esc((business.name || '?').trim().charAt(0).toUpperCase())}</span>`;
+  a.innerHTML = p.home_image_v != null ? `<img src="/api/platform/home-image?v=${p.home_image_v}" alt="">` : '<span>🌐</span>';
 }
 function applyBrand(business) {
-  applyHomeButton(business);
   if (business && business.accent_color) document.documentElement.style.setProperty('--accent', business.accent_color);
   if (business && 'theme' in business) {
     document.documentElement.dataset.theme = business.theme || 'classic';
