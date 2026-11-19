@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice history</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #000; background: #fff; margin: 0; font-size: 14px; }
+  .page { max-width: 760px; margin: 0 auto; padding: 28px 24px; }
+  .top { display: flex; justify-content: space-between; gap: 20px; }
+  h1 { margin: 0; font-size: 20px; } h2 { margin: 0; font-size: 18px; text-align: right; }
+  .box { border: 1px solid #000; padding: 10px 12px; margin-top: 18px; display: flex; justify-content: space-between; gap: 20px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  th, td { border-bottom: 1px solid #ccc; padding: 6px 4px; text-align: left; }
+  th { font-size: 12px; text-transform: uppercase; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .void td { color: #999; text-decoration: line-through; }
+  .due { font-size: 20px; font-weight: 800; }
+  .noprint { text-align: center; margin: 16px; } .noprint button { font: 15px system-ui; padding: 10px 18px; }
+  .top .cust { border: 1px solid #000; padding: 10px 12px; min-width: 240px; max-width: 340px; line-height: 1.45; }
+  .lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #555; margin-bottom: 3px; }
+  .box > div { flex: 1; } .amt { font-size: 16px; font-weight: 700; }
+  .note { margin-top: 14px; padding: 8px 12px; border-left: 4px solid #000; background: #f6f6f6; }
+  .sub { font-size: 12px; color: #444; } .muted { color: #666; }
+  .bar { max-width: 760px; margin: 0 auto; padding: 12px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #f4f5f3; border-bottom: 1px solid #ddd; }
+  .bar input { font: 14px system-ui; padding: 6px; } .bar .quick button { font: 13px system-ui; padding: 6px 10px; margin-right: 4px; }
+  .bar textarea { flex: 1 1 100%; font: 14px system-ui; padding: 8px; min-height: 48px; }
+  @media print { .noprint { display: none; } @page { margin: 12mm; } }
+</style>
+</head>
+<body>
+<div class="noprint bar"><button onclick="print()">🖨 Print</button> <button onclick="close()">Close</button></div>
+<div class="page" id="p">Loading…</div>
+<script src="/app.js"></script>
+<script>
+// Printable list of one customer's invoices: /history?id=<customer>&from=&to=&q=
+const q = new URLSearchParams(location.search);
+const longDate = (v) => new Date(v + 'T12:00:00').toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+(async () => {
+  const me = await api('/api/me');
+  const r = await api(`/api/customers/${encodeURIComponent(q.get('id'))}/sales?` + new URLSearchParams({ from: q.get('from') || '', to: q.get('to') || '', q: q.get('q') || '' }));
+  const c = r.customer, t = r.totals;
+  const range = r.from || r.to ? `${r.from ? longDate(r.from) : 'Beginning'} – ${r.to ? longDate(r.to) : 'today'}` : 'All dates';
+  document.title = `Invoices · ${c.name}`;
+  $('#p').innerHTML = `<div class="top">
+      <div class="cust"><div class="lbl">CUSTOMER</div><b>${esc(c.name)}</b>${c.company ? '<br>' + esc(c.company) : ''}${c.address ? '<br>' + esc(c.address).replace(/\n/g, '<br>') : ''}${c.phone ? '<br>' + esc(c.phone) : ''}${c.email ? '<br>' + esc(c.email) : ''}</div>
+      <div style="text-align:right">${me.business.logo_url ? `<img src="${esc(me.business.logo_url)}" alt="" style="max-height:60px;max-width:200px"><br>` : ''}<h1>${esc(me.business.name)}</h1>
+        <h2 style="margin-top:10px">INVOICE HISTORY</h2><div>${range}</div>${q.get('q') ? `<div class="muted">Search: "${esc(q.get('q'))}"</div>` : ''}
+        <div class="muted">Printed ${new Date().toLocaleDateString()}</div></div></div>
+    <div class="box"><div>Invoices<div class="amt">${t.n}</div></div><div>Sales tax<div class="amt">${money(t.tax)}</div></div>
+      ${t.on_account ? `<div>Charged to account<div class="amt">${money(t.on_account)}</div></div>` : ''}<div style="text-align:right">Total<div class="due">${money(t.total)}</div></div></div>
+    <table><thead><tr><th>Date</th><th>Invoice</th><th>PO / job site</th><th>Paid by</th><th class="n">Total</th></tr></thead><tbody>
+      ${r.sales.map((s) => `<tr class="${s.voided ? 'void' : ''}"><td>${new Date(s.created_at).toLocaleDateString()}</td><td>#${s.id}${s.voided ? ' (void)' : ''}</td>
+        <td>${s.po_number ? 'PO ' + esc(s.po_number) : ''}${s.job_address ? '<div class="sub">' + esc(s.job_address) + '</div>' : ''}${s.invoice_note ? '<div class="sub">Note: ' + esc(s.invoice_note) + '</div>' : ''}</td>
+        <td>${esc(paidByText(s))}</td><td class="n">${money(s.total_cents)}</td></tr>`).join('') || '<tr><td colspan="5">No invoices.</td></tr>'}</tbody></table>
+    <p class="muted" style="margin-top:18px">Voided invoices are shown crossed out and are not included in the totals.</p>`;
+})().catch((e) => { $('#p').textContent = e.message; });
+</script>
+</body>
+</html>
