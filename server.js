@@ -170,11 +170,12 @@ app.post('/api/logout', wrap(async (req, res) => {
 app.get('/api/me', requireLogin, wrap(async (req, res) => {
   let business = null;
   if (req.user.business_id) {
-    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone, receipt_reply_email, theme, home_link, CASE WHEN home_image IS NULL THEN NULL ELSE home_image_v END AS home_image_v FROM businesses WHERE id = $1', [req.user.business_id]);
+    const b = await pool.query('SELECT id, name, accent_color, logo_url, rentals_enabled, half_day_hours, deposit_account, qbo_enabled, time_zone, receipt_reply_email, theme FROM businesses WHERE id = $1', [req.user.business_id]);
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
-  res.json({ user: { id, name, email, role, backup_email: req.user.backup_email }, business, acting_until: req.user.acting_business_id ? req.user.acting_until : null,
+  const ps = (await pool.query('SELECT home_link, CASE WHEN home_image IS NULL THEN NULL ELSE home_image_v END AS home_image_v FROM platform_settings WHERE id=1')).rows[0] || {};
+  res.json({ user: { id, name, email, role, backup_email: req.user.backup_email }, business, platform: ps, acting_until: req.user.acting_business_id ? req.user.acting_until : null,
     features: { email_receipts: require('./email').configured() } });
 }));
 
@@ -965,23 +966,24 @@ async function sendProductImage(res, productId, businessId) {
     'X-Content-Type-Options': 'nosniff' });
   res.send(rows[0].image);
 }
-// Round button in the top-left corner: picture + web link, set per business in Settings.
-app.get('/api/business/home-image', ...biz, wrap(async (req, res) => {
-  const { rows } = await pool.query('SELECT home_image, home_image_type FROM businesses WHERE id=$1 AND home_image IS NOT NULL', [req.user.business_id]);
+// Round button in the top-left corner of every account: picture + web link.
+// Platform-wide, and only the platform admin can change it (Admin → Settings).
+app.get('/api/platform/home-image', requireLogin, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT home_image, home_image_type FROM platform_settings WHERE id=1 AND home_image IS NOT NULL');
   if (!rows[0]) return res.status(404).end();
   res.set({ 'Content-Type': rows[0].home_image_type, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
   res.send(rows[0].home_image);
 }));
-app.put('/api/business/home-button', ...biz, requireRole('owner'), wrap(async (req, res) => {
+app.put('/api/admin/home-button', requireLogin, requireAdmin, wrap(async (req, res) => {
   let link = text(req.body.link, 'Web address', { required: false, max: 500 });
   if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
   if (link && !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(link)) fail(400, 'That web address does not look right');
-  await pool.query('UPDATE businesses SET home_link=$1 WHERE id=$2', [link || null, req.user.business_id]);
+  await pool.query('UPDATE platform_settings SET home_link=$1 WHERE id=1', [link || null]);
   if (req.body.remove_image) {
-    await pool.query('UPDATE businesses SET home_image=NULL, home_image_type=NULL, home_image_v=home_image_v+1 WHERE id=$1', [req.user.business_id]);
+    await pool.query('UPDATE platform_settings SET home_image=NULL, home_image_type=NULL, home_image_v=home_image_v+1 WHERE id=1');
   } else if (req.body.image) {
     const photo = photoFromBody(req.body.image);
-    await pool.query('UPDATE businesses SET home_image=$1, home_image_type=$2, home_image_v=home_image_v+1 WHERE id=$3', [photo.bytes, photo.type, req.user.business_id]);
+    await pool.query('UPDATE platform_settings SET home_image=$1, home_image_type=$2, home_image_v=home_image_v+1 WHERE id=1', [photo.bytes, photo.type]);
   }
   res.json({ ok: true });
 }));
