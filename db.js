@@ -309,6 +309,41 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_image BYTEA;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_image_type TEXT;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS home_image_v INT NOT NULL DEFAULT 0;
 
+-- ===== Support access: the platform admin needs a code from the owner to open a business =====
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS acting_until TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS support_codes (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  made_by TEXT NOT NULL,                 -- 'email' (admin asked, emailed to owner) or 'owner' (owner made it in Settings)
+  requested_by INT REFERENCES users(id) ON DELETE SET NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS support_codes_biz ON support_codes (business_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS support_access_log (
+  id SERIAL PRIMARY KEY,
+  business_id INT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  user_id INT REFERENCES users(id) ON DELETE SET NULL,
+  user_name TEXT,
+  action TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS support_log_biz ON support_access_log (business_id, created_at DESC);
+
+-- ===== Account recovery: backup email + forgot-password links =====
+ALTER TABLE users ADD COLUMN IF NOT EXISTS backup_email TEXT;
+CREATE TABLE IF NOT EXISTS password_resets (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ===== Email receipts =====
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS receipt_reply_email TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS receipt_emailed_to TEXT;
