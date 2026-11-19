@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiPOS Reset Password</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body class="cp">
+<form class="auth" id="f">
+  <h1>New password</h1>
+  <div class="muted">Choose a new password for your MultiPOS login.</div>
+  <label for="pw">New password (8+ characters)</label>
+  <input id="pw" type="password" autocomplete="new-password" required minlength="8">
+  <label for="pw2">Type it again</label>
+  <input id="pw2" type="password" autocomplete="new-password" required minlength="8">
+  <label for="bk">Backup email <span class="muted">(required for owners: a different email you can always get into)</span></label>
+  <input id="bk" type="email" autocomplete="email" placeholder="you@example.com">
+  <button class="primary" type="submit">Save new password</button>
+  <div class="err" id="err"></div>
+  <div id="ok" hidden><p>Your password was changed. All devices were signed out.</p><a href="/login"><b>Sign in →</b></a></div>
+</form>
+<script src="/app.js"></script>
+<script>
+// /reset#<token> from the "Forgot password" email. The token stays in the # so it never reaches server logs.
+const tok = location.hash.slice(1);
+$('#f').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('#err').textContent = '';
+  if ($('#pw').value !== $('#pw2').value) { $('#err').textContent = 'The two passwords do not match'; return; }
+  try {
+    await api('/api/password/reset', { token: tok, password: $('#pw').value, backup_email: $('#bk').value.trim() });
+    $('#ok').hidden = false; $('#f').querySelectorAll('input,button.primary').forEach((x) => { x.disabled = true; });
+  } catch (err) { $('#err').textContent = err.message; }
+});
+if (!tok) $('#err').textContent = 'This page needs the link from your email.';
+</script>
+</body>
+</html>
