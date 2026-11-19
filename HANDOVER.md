@@ -1,7 +1,7 @@
-[HANDOVER (34).md](https://github.com/user-attachments/files/35089470/HANDOVER.34.md)
+[HANDOVER (39).md](https://github.com/user-attachments/files/35110066/HANDOVER.39.md)
 # MultiPOS — Build Handover
 
-Last updated: 2026-11-13 · Current version: **v1.15.0**
+Last updated: 2026-11-13 · Current version: **v1.16.0**
 
 This document explains how MultiPOS was built, so a new project (a **contractor POS**) can start from the same foundation. Attach this file and the latest `multipos-v1.10.zip` to the new conversation.
 
@@ -69,7 +69,7 @@ multipos/
                    Employees, Sales, Settings.
     scan.html      Phone scanner page (camera, flashlight, add-unknown-item to pending).
     login.html, setup.html, index.html
-    receipt.html, invoice.html (full-page invoice), r.html (customer receipt link), quote.html, giftcard.html,
+    receipt.html, invoice.html (full-page invoice), history.html (customer invoice list), r.html (customer receipt link), quote.html, giftcard.html,
     statement.html (customer account statement), deposit.html (deposit slip), receipt.css
 ```
 
@@ -120,6 +120,7 @@ Tables: `businesses`, `locations`, `registers`, `users`, `sessions`, `products`,
 | v1.13 | **Round button (top left)**: a picture in a circle that opens the store's website (Settings). |
 | v1.14 | **Support access codes**: the platform admin needs a one-time code from the owner (emailed, or made in Settings) to open a store; access lasts 4 hours; every visit is logged for the owner; support can't add logins or change passwords inside a store. First 3 days after a store is created need no code (setup). |
 | v1.15 | **Account recovery**: backup email (required for owners and platform admins, asked when changing password), **Forgot password?** link on sign-in emails a 30-minute reset link to the login and backup emails (`reset.html`), change notices emailed, support codes can go to the main, backup or both emails. |
+| v1.16 | **Find invoices by customer**: Sales tab search (customer, company, phone, invoice #, PO, job site, all dates); customer page **Invoices** section with date range, search, totals, **Print list** (`history.html`) and statement for the chosen dates. |
 
 ---
 
