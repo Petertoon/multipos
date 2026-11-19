@@ -74,7 +74,8 @@ async function loadUser(req) {
   const t = req.cookies[COOKIE];
   if (!t) return null;
   const { rows } = await pool.query(
-    `SELECT u.id, u.name, u.email, u.role, u.business_id AS own_business_id, s.acting_business_id
+    `SELECT u.id, u.name, u.email, u.backup_email, u.role, u.business_id AS own_business_id,
+            CASE WHEN s.acting_until > now() THEN s.acting_business_id END AS acting_business_id, s.acting_until
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = $1 AND s.expires_at > now() AND u.active`, [t]);
   const u = rows[0];
@@ -171,16 +172,97 @@ app.get('/api/me', requireLogin, wrap(async (req, res) => {
     business = b.rows[0] || null;
   }
   const { id, name, email, role } = req.user;
-  res.json({ user: { id, name, email, role }, business, features: { email_receipts: require('./email').configured() } });
+  res.json({ user: { id, name, email, role, backup_email: req.user.backup_email }, business, acting_until: req.user.acting_business_id ? req.user.acting_until : null,
+    features: { email_receipts: require('./email').configured() } });
 }));
 
+// ----- Login security: password + backup email -----
+// Owners and platform admins must keep a backup email; it's asked for every time they change their password.
+const EMAIL_OK = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[a-z]{2,}$/i;
+const needsBackup = (role) => role === 'owner' || role === 'admin';
+async function notifyEmails(list, subject, body) {
+  const mail = require('./email');
+  if (!mail.configured()) return;
+  for (const to of [...new Set(list.filter(Boolean))]) {
+    try { await mail.sendEmail({ to, subject, text: body, html: `<div style="font-family:Arial,sans-serif;max-width:480px;white-space:pre-line">${esc(body)}</div>` }); }
+    catch (e) { console.error('Notice email failed', e.message); }
+  }
+}
 app.post('/api/me/password', requireLogin, wrap(async (req, res) => {
   const current = (req.body.current || '').toString();
-  const next = text(req.body.password, 'New password');
-  if (next.length < 8) fail(400, 'Password must be at least 8 characters');
+  const next = (req.body.password || '').toString();
+  if (next && next.length < 8) fail(400, 'Password must be at least 8 characters');
+  let backup = String(req.body.backup_email ?? req.user.backup_email ?? '').trim().toLowerCase();
+  if (backup && !EMAIL_OK.test(backup)) fail(400, 'The backup email does not look right');
+  if (backup && backup === req.user.email.toLowerCase()) fail(400, 'The backup email must be different from your login email');
+  if (needsBackup(req.user.role) && !backup) fail(400, 'Enter a backup email. It is how you get back in if you lose your login email or password.');
+  if (!next && backup === (req.user.backup_email || '')) fail(400, 'Nothing to change');
   const { rows } = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
   if (!(await bcrypt.compare(current, rows[0].password_hash))) fail(400, 'Current password is wrong');
-  await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [await bcrypt.hash(next, 10), req.user.id]);
+  if (next) await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [await bcrypt.hash(next, 10), req.user.id]);
+  const oldBackup = req.user.backup_email || null;
+  const backupChanged = (backup || null) !== oldBackup;
+  if (backupChanged) await pool.query('UPDATE users SET backup_email = $1 WHERE id = $2', [backup || null, req.user.id]);
+  if (next) await pool.query('DELETE FROM sessions WHERE user_id = $1 AND token <> $2', [req.user.id, req.cookies[COOKIE]]);
+  const bizId = req.user.own_business_id;
+  const what = [next && 'password changed', backupChanged && 'backup email changed'].filter(Boolean).join(' and ');
+  if (bizId) await supportLog(bizId, req.user, `${req.user.name}: ${what}`);
+  await notifyEmails([req.user.email, oldBackup, backup], 'Your MultiPOS login was changed',
+    `Your MultiPOS login (${req.user.email}) was just changed: ${what}.${backupChanged ? `\nBackup email is now: ${backup || '(none)'}` : ''}\n\nIf this wasn't you, use "Forgot password?" on the MultiPOS sign-in page right away.`);
+  res.json({ ok: true, backup_email: backup || null });
+}));
+
+// Forgot password: emails a one-time link to the login email AND the backup email.
+const resetAttempts = new Map();
+app.post('/api/password/forgot', wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const key = req.ip + '|' + email, now = Date.now();
+  const rec = resetAttempts.get(key) || { n: 0, t: now };
+  if (now - rec.t > 60 * 60 * 1000) { rec.n = 0; rec.t = now; }
+  rec.n++; resetAttempts.set(key, rec);
+  if (rec.n > 5) fail(429, 'Too many requests. Try again in an hour.');
+  if (!require('./email').configured()) fail(400, 'Password reset emails are not set up yet. Contact MultiPOS support.');
+  const u = (await pool.query('SELECT id, name, email, backup_email, active FROM users WHERE email = $1', [email])).rows[0];
+  if (u && u.active) {
+    const t = token(24);
+    await pool.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [u.id]);
+    await pool.query(`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 minutes')`,
+      [u.id, crypto.createHash('sha256').update(t).digest('hex')]);
+    const link = `${publicOrigin(req)}/reset#${t}`;
+    for (const to of [...new Set([u.email, u.backup_email].filter(Boolean))]) {
+      try {
+        await require('./email').sendEmail({ to, subject: 'Reset your MultiPOS password',
+          text: `Someone asked to reset the password for the MultiPOS login ${u.email}.\n\nTo choose a new password, open this link within 30 minutes:\n${link}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:480px"><p>Someone asked to reset the password for the MultiPOS login <b>${esc(u.email)}</b>.</p>
+            <p><a href="${esc(link)}" style="display:inline-block;background:#1f8f4e;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">Choose a new password</a></p>
+            <p>The link works once, for 30 minutes.</p><p style="color:#666">If you didn't ask for this, ignore this email. Your password stays the same.</p></div>` });
+      } catch (e) { console.error('Reset email failed', e.message); }
+    }
+  }
+  // Same answer either way, so nobody can test which emails have logins.
+  res.json({ ok: true });
+}));
+app.post('/api/password/reset', wrap(async (req, res) => {
+  checkLoginRate(req.ip);
+  const t = String(req.body.token || '');
+  const next = String(req.body.password || '');
+  if (next.length < 8) fail(400, 'Password must be at least 8 characters');
+  const r = (await pool.query(`SELECT pr.id, u.id AS user_id, u.name, u.email, u.backup_email, u.role, u.business_id FROM password_resets pr
+      JOIN users u ON u.id = pr.user_id WHERE pr.token_hash = $1 AND pr.used_at IS NULL AND pr.expires_at > now() AND u.active`,
+    [crypto.createHash('sha256').update(t).digest('hex')])).rows[0];
+  if (!r) fail(400, 'This link has expired or was already used. Ask for a new one.');
+  let backup = r.backup_email;
+  if (needsBackup(r.role)) {
+    backup = String(req.body.backup_email || r.backup_email || '').trim().toLowerCase();
+    if (!EMAIL_OK.test(backup)) fail(400, 'Enter a backup email. It is how you get back in next time.');
+    if (backup === r.email.toLowerCase()) fail(400, 'The backup email must be different from your login email');
+  }
+  await pool.query('UPDATE password_resets SET used_at = now() WHERE id = $1', [r.id]);
+  await pool.query('UPDATE users SET password_hash = $1, backup_email = $2 WHERE id = $3', [await bcrypt.hash(next, 10), backup, r.user_id]);
+  await pool.query('DELETE FROM sessions WHERE user_id = $1', [r.user_id]);
+  if (r.business_id) await supportLog(r.business_id, { id: r.user_id, name: r.name }, `${r.name}: password reset by email link`);
+  await notifyEmails([r.email, r.backup_email, backup], 'Your MultiPOS password was reset',
+    `The password for the MultiPOS login ${r.email} was just reset using an emailed link.\n\nIf this wasn't you, reset it again with "Forgot password?" and contact MultiPOS support.`);
   res.json({ ok: true });
 }));
 
@@ -232,21 +314,111 @@ app.put('/api/admin/businesses/:id', requireLogin, requireAdmin, wrap(async (req
   res.json({ ok: true });
 }));
 
-// Lets the platform admin work inside a business (support / setup).
+// ----- Support access -----
+// The platform admin (or staff with admin logins) can only open a business with a 6-digit code
+// from the business owner: emailed to the owner on request, or made by the owner in Settings.
+// Exception: the first SETUP_DAYS after a business is created, so it can be set up.
+// Every request, entry and wrong code is logged; the owner sees the log in Settings.
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const SUPPORT_HOURS = 4, SETUP_DAYS = 3, CODE_MINUTES = 15;
+const hashCode = (c) => crypto.createHash('sha256').update('mp-support:' + c).digest('hex');
+const newCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+async function supportLog(businessId, user, action) {
+  await pool.query('INSERT INTO support_access_log (business_id, user_id, user_name, action) VALUES ($1,$2,$3,$4)',
+    [businessId, user ? user.id : null, user ? user.name : null, action]);
+}
+async function ownerOf(businessId) {
+  return (await pool.query(`SELECT b.id, b.name, b.created_at > now() - ($2 || ' days')::interval AS in_setup,
+      o.email AS owner_email, o.backup_email
+      FROM businesses b LEFT JOIN LATERAL (SELECT email, backup_email FROM users u WHERE u.business_id=b.id AND u.role='owner' AND u.active ORDER BY u.id LIMIT 1) o ON true
+      WHERE b.id=$1`, [businessId, String(SETUP_DAYS)])).rows[0] || fail(404, 'Business not found');
+}
+const maskEmail = (e) => (e ? e.replace(/^(.)(.*)(.@.*)$/, (m, a, b, c) => a + '*'.repeat(Math.min(b.length, 6)) + c) : null);
+
+// What the Open dialog needs to know.
+app.get('/api/admin/access/:id', requireLogin, requireAdmin, wrap(async (req, res) => {
+  const b = await ownerOf(req.params.id);
+  res.json({ name: b.name, in_setup: b.in_setup, owner_email: maskEmail(b.owner_email), backup_email: maskEmail(b.backup_email),
+    can_email: !!b.owner_email && require('./email').configured(),
+    setup_days: SETUP_DAYS, hours: SUPPORT_HOURS });
+}));
+// Email a code to the owner.
+app.post('/api/admin/access/:id/send', requireLogin, requireAdmin, wrap(async (req, res) => {
+  const b = await ownerOf(req.params.id);
+  if (!b.owner_email) fail(400, 'This business has no owner email');
+  const recent = await pool.query(`SELECT count(*)::int AS n FROM support_codes WHERE business_id=$1 AND made_by='email' AND created_at > now() - interval '1 hour'`, [b.id]);
+  if (recent.rows[0].n >= 5) fail(429, 'Too many codes sent in the last hour. Try again later.');
+  const code = newCode();
+  await pool.query(`UPDATE support_codes SET expires_at=now() WHERE business_id=$1 AND made_by='email' AND used_at IS NULL AND expires_at > now()`, [b.id]);
+  await pool.query(`INSERT INTO support_codes (business_id, code_hash, made_by, requested_by, expires_at) VALUES ($1,$2,'email',$3, now() + ($4 || ' minutes')::interval)`,
+    [b.id, hashCode(code), req.user.id, String(CODE_MINUTES)]);
+  const who = req.user.name || 'MultiPOS support';
+  const where = ['main', 'backup', 'both'].includes(req.body.to) ? req.body.to : 'main';
+  if (where !== 'main' && !b.backup_email) fail(400, 'The owner has no backup email');
+  const targets = where === 'both' ? [b.owner_email, b.backup_email] : where === 'backup' ? [b.backup_email] : [b.owner_email];
+  for (const to of targets) try {
+    await require('./email').sendEmail({ to, subject: `MultiPOS support access code for ${b.name}: ${code}`,
+      text: `${who} from MultiPOS support is asking to open your ${b.name} account to help you.\n\nYour code: ${code}\n\nOnly give this code if you asked for help. It works once, for ${CODE_MINUTES} minutes, and gives support access for up to ${SUPPORT_HOURS} hours.\nIf you did not ask for help, ignore this email. Nobody can open your account without the code.`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:480px">
+        <p><b>${esc(who)}</b> from MultiPOS support is asking to open your <b>${esc(b.name)}</b> account to help you.</p>
+        <p style="font-size:32px;font-weight:800;letter-spacing:6px;margin:18px 0">${code}</p>
+        <p>Only give this code if you asked for help. It works once, for ${CODE_MINUTES} minutes, and gives support access for up to ${SUPPORT_HOURS} hours.</p>
+        <p style="color:#666">If you did not ask for help, ignore this email. Nobody can open your account without the code.</p></div>` });
+  } catch (e) { fail(502, e.message); }
+  await supportLog(b.id, req.user, `Code emailed to owner (${where === 'both' ? 'main and backup email' : where + ' email'})`);
+  res.json({ ok: true, sent_to: targets.map(maskEmail).join(' and ') });
+}));
+// Open a business. Needs a valid code unless the business is still in its setup days.
 app.post('/api/admin/enter/:id', requireLogin, requireAdmin, wrap(async (req, res) => {
-  const b = await pool.query('SELECT id FROM businesses WHERE id = $1', [req.params.id]);
-  if (!b.rowCount) fail(404, 'Business not found');
-  await pool.query('UPDATE sessions SET acting_business_id = $1 WHERE token = $2', [req.params.id, req.cookies[COOKIE]]);
-  res.json({ ok: true });
+  const b = await ownerOf(req.params.id);
+  const code = String(req.body.code || '').replace(/\D/g, '');
+  let how;
+  if (code) {
+    const c = (await pool.query(`SELECT * FROM support_codes WHERE business_id=$1 AND used_at IS NULL AND expires_at > now() AND attempts < 5
+        ORDER BY created_at DESC`, [b.id])).rows;
+    const hit = c.find((x) => x.code_hash === hashCode(code));
+    if (!hit) {
+      if (c.length) await pool.query('UPDATE support_codes SET attempts = attempts + 1 WHERE id = ANY($1)', [c.map((x) => x.id)]);
+      await supportLog(b.id, req.user, 'Wrong code entered');
+      fail(403, c.length ? 'That code is not right. Check the newest email or ask the owner again.' : 'No active code. Send a new one, or ask the owner to make one.');
+    }
+    await pool.query('UPDATE support_codes SET used_at = now() WHERE id = $1', [hit.id]);
+    how = hit.made_by === 'owner' ? 'Opened the account with a code the owner made' : 'Opened the account with the emailed code';
+  } else if (b.in_setup) {
+    how = 'Opened the account during setup days (no code needed)';
+  } else {
+    fail(403, 'A code from the owner is needed to open this business');
+  }
+  await pool.query(`UPDATE sessions SET acting_business_id = $1, acting_until = now() + ($2 || ' hours')::interval WHERE token = $3`,
+    [b.id, String(SUPPORT_HOURS), req.cookies[COOKIE]]);
+  await supportLog(b.id, req.user, how);
+  res.json({ ok: true, hours: SUPPORT_HOURS });
 }));
 app.post('/api/admin/exit', requireLogin, requireAdmin, wrap(async (req, res) => {
-  await pool.query('UPDATE sessions SET acting_business_id = NULL WHERE token = $1', [req.cookies[COOKIE]]);
+  if (req.user.acting_business_id) await supportLog(req.user.acting_business_id, req.user, 'Left the account');
+  await pool.query('UPDATE sessions SET acting_business_id = NULL, acting_until = NULL WHERE token = $1', [req.cookies[COOKIE]]);
   res.json({ ok: true });
 }));
 
 // Everything below is scoped to the logged-in user's business.
 const biz = [requireLogin, requireBusiness];
 const managers = [...biz, requireRole('owner', 'manager')];
+
+// Owner side of support access: make a code to read to support, and see who opened the account.
+// (Only the real owner, not the platform admin acting as owner.)
+const realOwner = (req, res, next) => (req.user.role === 'owner' ? next() : next(new HttpError(403, 'Only the business owner can do this')));
+app.post('/api/support/code', ...biz, realOwner, wrap(async (req, res) => {
+  const code = newCode();
+  await pool.query(`UPDATE support_codes SET expires_at=now() WHERE business_id=$1 AND made_by='owner' AND used_at IS NULL AND expires_at > now()`, [req.user.business_id]);
+  await pool.query(`INSERT INTO support_codes (business_id, code_hash, made_by, requested_by, expires_at) VALUES ($1,$2,'owner',$3, now() + ($4 || ' minutes')::interval)`,
+    [req.user.business_id, hashCode(code), req.user.id, String(CODE_MINUTES)]);
+  await supportLog(req.user.business_id, req.user, 'Owner made a support code');
+  res.json({ code, minutes: CODE_MINUTES });
+}));
+app.get('/api/support/log', ...biz, requireRole('owner'), wrap(async (req, res) => {
+  const r = await pool.query('SELECT user_name, action, created_at FROM support_access_log WHERE business_id=$1 ORDER BY created_at DESC LIMIT 50', [req.user.business_id]);
+  res.json({ log: r.rows, hours: SUPPORT_HOURS });
+}));
 
 // ---------- business settings ----------
 app.put('/api/business', ...biz, requireRole('owner'), wrap(async (req, res) => {
@@ -1458,7 +1630,16 @@ function allowedRole(req, role) {
   if (!allowed.includes(role)) fail(403, 'You cannot give that role');
   return role;
 }
+// Support staff working inside a store can't make themselves a login or change passwords there
+// (that would let them come back later without the owner's code). Allowed during setup days.
+async function noBackdoor(req, what) {
+  if (req.user.role !== 'admin') return;
+  const b = await ownerOf(req.user.business_id);
+  if (!b.in_setup) fail(403, `For the owner's security, support can't ${what}. Ask the owner to do it.`);
+  await supportLog(b.id, req.user, `During setup: ${what}`);
+}
 app.post('/api/users', ...managers, wrap(async (req, res) => {
+  await noBackdoor(req, 'add employee logins');
   const role = allowedRole(req, req.body.role);
   const password = text(req.body.password, 'Password');
   if (password.length < 8) fail(400, 'Password must be at least 8 characters');
@@ -1473,6 +1654,8 @@ app.put('/api/users/:id', ...managers, wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT role FROM users WHERE id=$1 AND business_id=$2',
     [req.params.id, req.user.business_id]);
   if (!rows[0]) fail(404, 'Employee not found');
+  if (req.body.password) await noBackdoor(req, 'change passwords');
+  if (rows[0].role === 'owner' || req.body.role === 'owner') await noBackdoor(req, "change the owner's login");
   allowedRole(req, rows[0].role);
   const role = allowedRole(req, req.body.role || rows[0].role);
   if (Number(req.params.id) === req.user.id && (req.body.active === false || role !== rows[0].role)) {
