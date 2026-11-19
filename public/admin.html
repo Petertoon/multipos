@@ -2,58 +2,1093 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Invoice history</title>
+<title>MultiPOS Manage</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/theme.css">
 <style>
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #000; background: #fff; margin: 0; font-size: 14px; }
-  .page { max-width: 760px; margin: 0 auto; padding: 28px 24px; }
-  .top { display: flex; justify-content: space-between; gap: 20px; }
-  h1 { margin: 0; font-size: 20px; } h2 { margin: 0; font-size: 18px; text-align: right; }
-  .box { border: 1px solid #000; padding: 10px 12px; margin-top: 18px; display: flex; justify-content: space-between; gap: 20px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
-  th, td { border-bottom: 1px solid #ccc; padding: 6px 4px; text-align: left; }
-  th { font-size: 12px; text-transform: uppercase; }
-  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-  .void td { color: #999; text-decoration: line-through; }
-  .due { font-size: 20px; font-weight: 800; }
-  .noprint { text-align: center; margin: 16px; } .noprint button { font: 15px system-ui; padding: 10px 18px; }
-  .top .cust { border: 1px solid #000; padding: 10px 12px; min-width: 240px; max-width: 340px; line-height: 1.45; }
-  .lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #555; margin-bottom: 3px; }
-  .box > div { flex: 1; } .amt { font-size: 16px; font-weight: 700; }
-  .note { margin-top: 14px; padding: 8px 12px; border-left: 4px solid #000; background: #f6f6f6; }
-  .sub { font-size: 12px; color: #444; } .muted { color: #666; }
-  .bar { max-width: 760px; margin: 0 auto; padding: 12px 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #f4f5f3; border-bottom: 1px solid #ddd; }
-  .bar input { font: 14px system-ui; padding: 6px; } .bar .quick button { font: 13px system-ui; padding: 6px 10px; margin-right: 4px; }
-  .bar textarea { flex: 1 1 100%; font: 14px system-ui; padding: 8px; min-height: 48px; }
-  @media print { .noprint { display: none; } @page { margin: 12mm; } }
+  main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bar h2 { margin: 0; flex: 1; }
+  .bar input, .bar select { width: auto; }
+  .banner { background: #fff4d6; padding: 10px 16px; display: flex; gap: 12px; align-items: center; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .stat { background: #fff; border-radius: 10px; padding: 14px; }
+  .stat div { color: var(--muted); font-size: 13px; }
+  .stat b { font-size: 24px; font-variant-numeric: tabular-nums; }
+  .locbox { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .locbox h3 { margin: 0; display: flex; gap: 10px; align-items: center; }
+  .locbox h3 span { flex: 1; }
+  .regs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .reg { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: flex; gap: 8px; align-items: center; }
+  .reg button { padding: 4px 8px; font-size: 13px; }
+  .tablewrap { overflow-x: auto; }
+  td button { padding: 6px 10px; font-size: 14px; }
+  .settings { background: #fff; border-radius: 10px; padding: 18px; max-width: 520px; margin-bottom: 14px; }
+  .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #eef1ec; display: block; }
+  .thumb.none { display: flex; align-items: center; justify-content: center; color: #aab; font-size: 20px; }
+  .photo-preview { width: 100%; max-height: 280px; object-fit: contain; background: #f4f5f3; border-radius: 10px; margin: 10px 0; }
+  .photo-actions { display: grid; gap: 8px; }
+  .bar.filters { gap: 6px; } .bar.filters button { padding: 7px 10px; font-size: 14px; }
+  tr.totrow td { font-weight: 800; background: #fafbf9; }
+  h3 { margin: 18px 0 8px; }
+  @media print { .topbar, .bar button, .bar select, .bar input, #actingBanner { display: none !important; } body { background: #fff; } }
+  button.qboon { background: #e6f4ea; color: #1b6e37; }
+  .qbbtn { background: #2ca01c; color: #fff; font-size: 17px; padding: 12px 22px; }
+  #qbMap select { width: 100%; }
+  .formhead { font-weight: 800; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .rentpill { background: #fff3e0; color: #8a4b00; }
+  button.rentson { background: #fff3e0; color: #8a4b00; }
+  .stat.refund b { color: #c0392b; }
+  .badge { background: #e74c3c; color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
+  .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .pcard { background: #fff; border-radius: 10px; padding: 12px; display: flex; gap: 12px; }
+  .pcard > img, .pnone { width: 110px; height: 110px; border-radius: 8px; object-fit: cover; flex: none; background: #eef1ec; }
+  .pnone { display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 28px; color: #9aa; }
+  .pnone span { font-size: 12px; }
+  .pbody { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .pact { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .pact button { padding: 8px 12px; font-size: 14px; }
+  .warn { background: #fff4d6; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  .photofield { display: flex; gap: 12px; align-items: center; }
+  .photofield img { width: 84px; height: 84px; border-radius: 10px; object-fit: cover; background: #eef1ec; flex: none; }
+  .photofield .thumb { width: 84px; height: 84px; font-size: 28px; flex: none; }
+  .photobtns { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 </style>
 </head>
-<body>
-<div class="noprint bar"><button onclick="print()">🖨 Print</button> <button onclick="close()">Close</button></div>
-<div class="page" id="p">Loading…</div>
+<body class="cp">
+<div class="topbar">
+  <a class="homebtn" id="homeBtn" hidden></a>
+  <div class="brand">MultiPOS</div>
+  <div class="biz" id="bizName"></div>
+  <div class="spacer"></div>
+  <span id="nav"></span>
+  <button class="link" onclick="logout()">Log out</button>
+</div>
+<div class="banner" id="bakNag" hidden>
+  <span>🔒 Add a <b>backup email</b> so you can get back into your account if you forget your password or lose your email.</span>
+  <button onclick="location.hash='settings'; setTimeout(() => { const m = document.getElementById('mySec'); if (m) m.scrollIntoView(); document.getElementById('pBak')?.focus(); }, 300)">Add it now</button>
+</div>
+<div class="banner" id="actingBanner" hidden>
+  <span>You are working inside <b id="actingName"></b> as platform administrator<span id="actingLeft"></span>.</span>
+  <button onclick="exitBusiness()">Back to all businesses</button>
+</div>
+<main id="view"></main>
+
+<div class="modal-back" id="formModal"><form class="modal" id="form"></form></div>
+
+<div class="modal-back" id="photoModal">
+  <div class="modal">
+    <h2 id="photoTitle">Product photo</h2>
+    <img id="photoPreview" class="photo-preview" alt="" hidden>
+    <div id="photoNone" class="muted" style="margin:10px 0">No photo yet.</div>
+    <div class="photo-actions">
+      <button class="primary" id="photoPick">Choose or take a photo</button>
+      <button class="ghost" id="photoRemove">Remove photo</button>
+    </div>
+    <input type="file" id="photoFile" accept="image/*" hidden>
+    <div class="actions"><button type="button" class="ghost" id="photoClose">Done</button></div>
+  </div>
+</div>
+
+<script src="/hours.js"></script>
 <script src="/app.js"></script>
 <script>
-// Printable list of one customer's invoices: /history?id=<customer>&from=&to=&q=
-const q = new URLSearchParams(location.search);
-const longDate = (v) => new Date(v + 'T12:00:00').toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+let me, role;
+const TABS = [
+  { id: 'businesses', label: 'Businesses', show: () => me.user.role === 'admin' && !me.business },
+  { id: 'products', label: 'Products', show: () => !!me.business },
+  { id: 'pending', label: 'Pending items', show: () => !!me.business },
+  { id: 'refunds', label: 'Refunds owed', show: () => !!(me.business && me.business.rentals_enabled) },
+  { id: 'customers', label: 'Customers', show: () => !!me.business },
+  { id: 'reports', label: 'Reports', show: () => !!me.business },
+  { id: 'deposits', label: 'Deposits', show: () => !!me.business },
+  { id: 'quickbooks', label: 'QuickBooks', show: () => !!(me.business && me.business.qbo_enabled && role === 'owner') },
+  { id: 'locations', label: 'Locations', show: () => !!me.business },
+  { id: 'employees', label: 'Employees', show: () => !!me.business },
+  { id: 'sales', label: 'Sales', show: () => !!me.business },
+  { id: 'settings', label: 'Settings', show: () => true },
+];
+const PRODUCT_FORM = [
+  { name: 'name', label: 'Product name', required: true },
+  { name: 'photo', label: 'Photo', type: 'photo' },
+  { name: 'barcode', label: 'Barcode (UPC / EAN / QR text)', hint: 'Leave blank for items without a barcode. A USB scanner can type it here.' },
+  { name: 'category', label: 'Category', hint: 'Shown as a tab on the checkout screen, e.g. Drinks' },
+  { name: 'price_cents', label: 'Price', type: 'money', required: true },
+  { name: 'taxable', label: 'Taxable', type: 'check' },
+  { name: 'track_stock', label: 'Track stock for this product', type: 'check' },
+  { name: 'stock_qty', label: 'Quantity in stock', type: 'number' },
+  { name: 'active', label: 'Show at checkout', type: 'check' },
+];
+const RENTAL_FORM = [
+  { type: 'heading', name: '_rent', label: 'Rental', hint: 'Only for items you rent out. Leave a rate blank if you don\'t offer that period. Customers prepay.' },
+  { name: 'is_rental', label: 'This is a rental item', type: 'check' },
+  { name: 'rate_half_day', label: 'Half day rate', type: 'money' },
+  { name: 'rate_day', label: 'Day rate (multiple days = this × days)', type: 'money' },
+  { name: 'rate_week', label: 'Week rate', type: 'money' },
+  { name: 'rate_month', label: 'Month rate', type: 'money' },
+  { name: 'rental_units', label: 'How many of this item you have to rent', type: 'number' },
+];
+// The product form, with rental fields when this business has Rentals turned on.
+function productForm() {
+  if (!(me.business && me.business.rentals_enabled)) return PRODUCT_FORM;
+  return [...PRODUCT_FORM.map((f) => (f.name === 'price_cents'
+    ? { ...f, required: false, label: 'Price (for items you sell; leave blank for rental-only items)' } : f)), ...RENTAL_FORM];
+}
+// Saves a product form: blank price only allowed on rental items.
+function checkProduct(v) {
+  if (!v.is_rental && v.price_cents == null) throw new Error('Enter a price, or check "This is a rental item"');
+  return v;
+}
+let pendingCount = 0;
+
+// ---------- generic form modal ----------
+// fields: {name, label, type: text|email|password|money|number|check|select|color, options, required, hint}
+function formModal(title, fields, values = {}, submitLabel = 'Save') {
+  return new Promise((resolve) => {
+    const f = $('#form');
+    f.innerHTML = `<h2>${esc(title)}</h2>${fields.map((x) => {
+      const v = values[x.name];
+      if (x.type === 'heading') return `<div class="formhead">${esc(x.label)}</div>${x.hint ? `<div class="muted" style="font-size:13px">${esc(x.hint)}</div>` : ''}`;
+      if (x.type === 'check') return `<label class="check"><input type="checkbox" name="${x.name}" ${v ? 'checked' : ''}> ${esc(x.label)}</label>`;
+      if (x.type === 'photo') return `<label>${esc(x.label)}</label><div class="photofield">
+        <img data-photo-img alt="" ${v ? `src="${esc(v)}"` : 'hidden'}><div class="thumb none" data-photo-none ${v ? 'hidden' : ''}>📷</div>
+        <div class="photobtns"><button type="button" data-photo-pick>${v ? 'Change photo' : 'Choose or take a photo'}</button>
+        <button type="button" class="ghost" data-photo-clear ${v ? '' : 'hidden'}>Remove</button></div>
+        <input type="file" accept="image/*" data-photo-file hidden></div>`;
+      if (x.type === 'select') return `<label>${esc(x.label)}</label><select name="${x.name}">${x.options.map((o) => `<option value="${esc(o.value)}" ${String(o.value) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+      const val = x.type === 'money' ? (v == null ? '' : (v / 100).toFixed(2)) : (v ?? '');
+      const type = x.type === 'money' ? 'text' : (x.type || 'text');
+      return `<label>${esc(x.label)}</label><input name="${x.name}" type="${type}" value="${esc(val)}" ${x.type === 'money' ? 'inputmode="decimal"' : ''} ${x.required ? 'required' : ''} ${x.type === 'number' ? 'step="any"' : ''}>${x.hint ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(x.hint)}</div>` : ''}`;
+    }).join('')}<div class="err" id="formErr"></div>
+    <div class="actions"><button type="button" class="ghost" id="formCancel">Cancel</button><button class="primary">${esc(submitLabel)}</button></div>`;
+    $('#formModal').classList.add('open');
+    const first = f.querySelector('input:not([type=checkbox]), select'); if (first) first.focus();
+    // Photo field state: a new photo (data URL), a removal, or unchanged.
+    const photoField = fields.find((x) => x.type === 'photo');
+    const startPhoto = photoField ? values[photoField.name] : null;
+    const photo = { data: startPhoto && String(startPhoto).startsWith('data:') ? startPhoto : null, removed: false };
+    if (photoField) {
+      const img = f.querySelector('[data-photo-img]'), none = f.querySelector('[data-photo-none]');
+      const pick = f.querySelector('[data-photo-pick]'), clear = f.querySelector('[data-photo-clear]'), file = f.querySelector('[data-photo-file]');
+      const show = (src) => { img.hidden = !src; none.hidden = !!src; clear.hidden = !src; if (src) img.src = src; pick.textContent = src ? 'Change photo' : 'Choose or take a photo'; };
+      pick.onclick = () => file.click();
+      file.onchange = async () => {
+        const fl = file.files[0]; file.value = ''; if (!fl) return;
+        pick.disabled = true; pick.textContent = 'Preparing…';
+        try { photo.data = await resizeImage(fl); photo.removed = false; show(photo.data); }
+        catch (e) { toast(e.message, 'bad'); show(img.hidden ? null : img.src); }
+        finally { pick.disabled = false; }
+      };
+      clear.onclick = () => { photo.data = null; photo.removed = true; show(null); };
+    }
+    const close = (out) => { $('#formModal').classList.remove('open'); f.onsubmit = null; resolve(out); };
+    $('#formCancel').onclick = () => close(null);
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const out = {};
+      for (const x of fields) {
+        const el = f.elements[x.name];
+        if (x.type === 'photo') out[x.name] = photo.data || (photo.removed && startPhoto ? 'remove' : null);
+        else if (x.type === 'check') out[x.name] = el.checked;
+        else if (x.type === 'heading') continue;
+        else if (x.type === 'money') {
+          if (!x.required && !el.value.trim()) { out[x.name] = null; continue; }
+          const c = toCents(el.value);
+          if (c === null) { $('#formErr').textContent = `${x.label}: enter an amount like 4.99`; return; }
+          out[x.name] = c;
+        } else out[x.name] = el.value;
+      }
+      close(out);
+    };
+  });
+}
+// Runs a save; shows the error and re-opens the form if it fails.
+async function saveLoop(title, fields, values, fn, submitLabel) {
+  for (;;) {
+    const v = await formModal(title, fields, values, submitLabel);
+    if (!v) return false;
+    try { await fn(v); toast('Saved'); return true; }
+    catch (e) { toast(e.message, 'bad'); values = v; }
+  }
+}
+
+// ---------- businesses (platform admin) ----------
+async function showBusinesses() {
+  const list = await api('/api/admin/businesses');
+  $('#view').innerHTML = `<div class="bar"><h2>Businesses</h2><button class="primary" id="addBiz">+ New business</button></div>
+    <div class="tablewrap"><table class="list"><thead><tr><th>Business</th><th>Owner login</th><th class="num">Locations</th><th class="num">Users</th><th>Status</th><th>Add-ons</th><th></th></tr></thead><tbody>
+    ${list.map((b) => `<tr class="${b.active ? '' : 'off'}"><td><b>${esc(b.name)}</b></td><td>${esc(b.owner_email || '')}</td><td class="num">${b.location_count}</td><td class="num">${b.user_count}</td>
+      <td>${b.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
+      <td style="white-space:nowrap"><button class="${b.rentals_enabled ? 'rentson' : 'ghost'}" data-rentals="${b.id}" data-on="${b.rentals_enabled}" title="Rentals add-on">🔑 Rentals ${b.rentals_enabled ? 'on' : 'off'}</button>
+        <button class="${b.qbo_enabled ? 'qboon' : 'ghost'}" data-qbo="${b.id}" data-on="${b.qbo_enabled}" title="QuickBooks add-on">QuickBooks ${b.qbo_enabled ? 'on' : 'off'}</button></td>
+      <td style="white-space:nowrap"><button class="primary" data-enter="${b.id}">Open</button> <button data-toggle="${b.id}" data-active="${b.active}">${b.active ? 'Turn off' : 'Turn on'}</button></td></tr>`).join('')
+      || '<tr><td colspan="7" class="muted">No businesses yet. Create the first one.</td></tr>'}
+    </tbody></table></div>`;
+  $('#addBiz').onclick = async () => {
+    if (await saveLoop('New business', [
+      { name: 'name', label: 'Business name', required: true },
+      { name: 'location_name', label: 'First location name', required: true },
+      { name: 'tax_rate', label: 'Sales tax rate (%)', type: 'number', required: true },
+      { name: 'owner_name', label: 'Owner name', required: true },
+      { name: 'owner_email', label: 'Owner login email', type: 'email', required: true },
+      { name: 'owner_password', label: 'Owner password (8+ characters)', type: 'password', required: true },
+    ], { location_name: 'Main Location', tax_rate: 8.25 }, (v) => api('/api/admin/businesses', v), 'Create business')) showBusinesses();
+  };
+  $('#view').onclick = async (e) => {
+    const en = e.target.closest('[data-enter]'), tg = e.target.closest('[data-toggle]'), rt = e.target.closest('[data-rentals]');
+    const qb = e.target.closest('[data-qbo]');
+    if (qb) {
+      const on = qb.dataset.on !== 'true';
+      if (!on && !confirm('Turn off QuickBooks for this business? Syncing stops. Nothing already in QuickBooks is removed.')) return;
+      await api(`/api/admin/businesses/${qb.dataset.qbo}/qbo`, { enabled: on }, 'PUT'); showBusinesses(); return;
+    }
+    if (rt) {
+      const on = rt.dataset.on !== 'true';
+      if (!on && !confirm('Turn off Rentals for this business? Rental screens will be hidden. Nothing is deleted.')) return;
+      await api('/api/admin/businesses/' + rt.dataset.rentals, { rentals_enabled: on }, 'PUT'); showBusinesses(); return;
+    }
+    if (en) { openAccess(Number(en.dataset.enter)); return; }
+    if (tg) {
+      const turnOn = tg.dataset.active !== 'true';
+      if (!turnOn && !confirm('Turn off this business? Its employees will not be able to log in.')) return;
+      await api('/api/admin/businesses/' + tg.dataset.toggle, { active: turnOn }, 'PUT'); showBusinesses();
+    }
+  };
+}
+// Opening a business needs a code from its owner (emailed, or made by the owner in Settings).
+async function openAccess(id) {
+  let back = $('#accessModal');
+  if (!back) {
+    back = document.createElement('div'); back.className = 'modal-back'; back.id = 'accessModal';
+    back.innerHTML = `<form class="modal"><h2>🔒 Open <span data-name></span></h2>
+      <p class="muted" style="margin-top:0" data-why></p>
+      <div data-setup hidden class="banner" style="margin:0 0 10px">This business is still in its setup days, so no code is needed yet.</div>
+      <div data-sendrow style="display:flex;gap:8px;flex-wrap:wrap"><select data-to style="flex:1 1 100%"></select>
+        <button type="button" class="ghost" data-send>✉️ Email a code</button></div>
+      <div class="muted" data-sent style="font-size:13px;margin-top:6px"></div>
+      <label>Code from the owner</label>
+      <input data-code inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="6-digit code" style="font-size:24px;letter-spacing:6px;text-align:center">
+      <div class="err" data-err></div>
+      <div class="actions"><button type="button" class="ghost" data-x>Cancel</button><button class="primary" data-go>Open business</button></div></form>`;
+    document.body.appendChild(back);
+    back.querySelector('[data-x]').onclick = () => back.classList.remove('open');
+  }
+  const q = (k) => back.querySelector(`[data-${k}]`);
+  q('err').textContent = ''; q('sent').textContent = ''; q('code').value = '';
+  let info;
+  try { info = await api('/api/admin/access/' + id); } catch (e) { toast(e.message, 'bad'); return; }
+  q('name').textContent = info.name;
+  q('why').innerHTML = `To protect each store's information, the owner gives you a one-time code. Access lasts up to ${info.hours} hours, and the owner can see every visit in their Settings.`
+    + (info.can_email ? '' : `<br><b>Email isn't available${info.owner_email ? ' on this server' : ' (no owner email)'}.</b> Ask the owner to make a code in Settings → Support access and read it to you.`);
+  q('setup').hidden = !info.in_setup;
+  q('sendrow').hidden = !info.can_email;
+  q('to').innerHTML = `<option value="main">To the owner's email (${esc(info.owner_email || '')})</option>`
+    + (info.backup_email ? `<option value="backup">To the backup email (${esc(info.backup_email)})</option><option value="both">To both emails</option>` : '');
+  q('send').disabled = false;
+  q('send').onclick = async () => {
+    q('send').disabled = true; q('err').textContent = '';
+    try { const r = await api(`/api/admin/access/${id}/send`, { to: q('to').value }); q('sent').textContent = `Code sent to ${r.sent_to}. It works for 15 minutes. Ask the owner to read it to you.`; q('code').focus(); }
+    catch (e) { q('err').textContent = e.message; }
+    finally { setTimeout(() => { q('send').disabled = false; }, 20000); }
+  };
+  back.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault(); q('err').textContent = '';
+    const code = q('code').value.replace(/\D/g, '');
+    if (!code && !info.in_setup) { q('err').textContent = 'Enter the 6-digit code from the owner'; return; }
+    try { await api('/api/admin/enter/' + id, { code }); location.hash = 'products'; location.reload(); }
+    catch (err) { q('err').textContent = err.message; }
+  };
+  back.classList.add('open'); q('code').focus();
+}
+async function exitBusiness() { await api('/api/admin/exit', {}); location.hash = 'businesses'; location.reload(); }
+
+// ---------- products ----------
+let productQuery = '';
+async function showProducts() {
+  const canEdit = role !== 'cashier';
+  const list = await api('/api/products?all=1&q=' + encodeURIComponent(productQuery));
+  $('#view').innerHTML = `<div class="bar"><h2>Products</h2><input id="pq" placeholder="Search name, barcode, category" value="${esc(productQuery)}">
+    ${canEdit ? '<button class="primary" id="addProd">+ Add product</button>' : ''}</div>
+    <div class="tablewrap"><table class="list"><thead><tr><th></th><th>Product</th><th>Barcode</th><th>Category</th><th class="num">Price</th><th>Tax</th><th class="num">Stock</th><th></th></tr></thead><tbody>
+    ${list.map((p) => `<tr class="${p.active ? '' : 'off'}">
+      <td>${p.has_image ? `<img class="thumb" src="${productImg(p.id, p.image_version)}" alt="" loading="lazy">` : '<div class="thumb none">📷</div>'}</td>
+      <td><b>${esc(p.name)}</b>${p.active ? '' : ' <span class="pill off">Hidden</span>'}</td><td>${esc(p.barcode || '')}</td><td>${esc(p.category || '')}</td>
+      <td class="num">${p.is_rental ? `<span class="pill rentpill">Rental</span><div class="muted" style="font-size:12px">${[['rate_half_day', '½ day'], ['rate_day', 'day'], ['rate_week', 'week'], ['rate_month', 'month']].filter(([k]) => p[k] != null).map(([k, l]) => `${money(p[k])}/${l}`).join(' · ')}</div>` : money(p.price_cents)}</td><td>${p.taxable ? 'Yes' : 'No'}</td><td class="num">${p.is_rental ? p.rental_units + ' units' : p.track_stock ? p.stock_qty : '—'}</td>
+      <td style="white-space:nowrap">${canEdit ? `<button data-edit="${p.id}">Edit</button> <button data-photo="${p.id}">Photo</button>` : ''}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted">No products found.</td></tr>'}</tbody></table></div>`;
+  let t; $('#pq').oninput = () => { clearTimeout(t); t = setTimeout(() => { productQuery = $('#pq').value; showProducts().then(() => { const q = $('#pq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
+  const fields = productForm();
+  // Saves the product, then its photo (if a new one was picked or it was removed).
+  async function savePhoto(id, photo) {
+    if (photo === 'remove') await api(`/api/products/${id}/image`, undefined, 'DELETE');
+    else if (photo) await api(`/api/products/${id}/image`, { data_url: photo }, 'PUT');
+  }
+  let createdId = null;
+  if (canEdit) $('#addProd').onclick = async () => {
+    createdId = null;
+    if (await saveLoop('Add product', fields, { taxable: true, active: true, stock_qty: 0, rental_units: 1 }, async (v) => {
+      const { photo, ...product } = checkProduct(v);
+      // If the photo failed last time, don't create the product twice.
+      if (!createdId) createdId = (await api('/api/products', product)).id;
+      else await api('/api/products/' + createdId, product, 'PUT');
+      await savePhoto(createdId, photo);
+    })) showProducts();
+    else if (createdId) showProducts();
+  };
+  $('#view').onclick = async (e) => {
+    const ph = e.target.closest('[data-photo]');
+    if (ph) { openPhoto(list.find((x) => x.id === Number(ph.dataset.photo))); return; }
+    const b = e.target.closest('[data-edit]'); if (!b) return;
+    const p = list.find((x) => x.id === Number(b.dataset.edit));
+    const values = { ...p, photo: p.has_image ? productImg(p.id, p.image_version) : null };
+    if (await saveLoop('Edit product', fields, values, async (v) => {
+      const { photo, ...product } = checkProduct(v);
+      await api('/api/products/' + p.id, product, 'PUT');
+      await savePhoto(p.id, photo);
+    })) showProducts();
+  };
+}
+
+// ---------- product photo ----------
+let photoProduct = null, photoChanged = false;
+function showPhotoState() {
+  const p = photoProduct;
+  $('#photoTitle').textContent = 'Photo: ' + p.name;
+  $('#photoPreview').hidden = !p.has_image; $('#photoNone').hidden = p.has_image;
+  $('#photoRemove').hidden = !p.has_image;
+  if (p.has_image) $('#photoPreview').src = productImg(p.id, p.image_version);
+}
+function openPhoto(p) {
+  photoProduct = { ...p }; photoChanged = false;
+  showPhotoState(); $('#photoModal').classList.add('open');
+}
+$('#photoPick').onclick = () => $('#photoFile').click();
+$('#photoFile').onchange = async () => {
+  const file = $('#photoFile').files[0]; $('#photoFile').value = '';
+  if (!file) return;
+  $('#photoPick').disabled = true; $('#photoPick').textContent = 'Uploading…';
+  try {
+    const dataUrl = await resizeImage(file);
+    await api(`/api/products/${photoProduct.id}/image`, { data_url: dataUrl }, 'PUT');
+    photoProduct.has_image = true; photoProduct.image_version = Date.now(); photoChanged = true;
+    $('#photoPreview').src = dataUrl; showPhotoState(); $('#photoPreview').src = dataUrl;
+    toast('Photo saved');
+  } catch (e) { toast(e.message, 'bad'); }
+  finally { $('#photoPick').disabled = false; $('#photoPick').textContent = 'Choose or take a photo'; }
+};
+$('#photoRemove').onclick = async () => {
+  if (!confirm('Remove this photo?')) return;
+  try {
+    await api(`/api/products/${photoProduct.id}/image`, undefined, 'DELETE');
+    photoProduct.has_image = false; photoChanged = true; showPhotoState(); toast('Photo removed');
+  } catch (e) { toast(e.message, 'bad'); }
+};
+$('#photoClose').onclick = () => { $('#photoModal').classList.remove('open'); if (photoChanged) showProducts(); };
+
+// ---------- pending items ----------
+let pendingStatus = 'pending';
+async function showPending() {
+  const data = await api('/api/pending?status=' + pendingStatus);
+  setPendingBadge(data.pending_count);
+  const list = data.items;
+  const tab = (s, label) => `<button class="${s === pendingStatus ? 'primary' : 'ghost'}" data-status="${s}">${label}</button>`;
+  $('#view').innerHTML = `<div class="bar"><h2>Pending items</h2>${tab('pending', `Waiting (${data.pending_count})`)}${tab('approved', 'Approved')}${tab('dismissed', 'Dismissed')}</div>
+    <p class="muted" style="margin-top:0">Items scanned at the register that weren't in Products. Approve one to add it to Products with your price, or dismiss it.</p>
+    <div class="pgrid">${list.map((p) => `<div class="pcard">
+      ${p.has_image ? `<img src="/api/pending/${p.id}/image?v=${p.image_version}" alt="">` : '<div class="pnone">📷<span>No photo</span></div>'}
+      <div class="pbody">
+        <b>${esc(p.name)}</b>
+        <div>${p.barcode ? `Barcode <b>${esc(p.barcode)}</b>` : '<span class="muted">No barcode</span>'}</div>
+        <div>Charged ${p.price_cents == null ? '—' : money(p.price_cents)}${p.times_seen > 1 ? ` · <span class="pill">scanned ${p.times_seen}×</span>` : ''}</div>
+        ${p.note ? `<div class="muted">Note: ${esc(p.note)}</div>` : ''}
+        <div class="muted" style="font-size:13px">${esc(p.reported_by || '')} · ${new Date(p.updated_at).toLocaleString()}</div>
+        ${p.existing_product && p.status === 'pending' ? `<div class="warn">This barcode is already in Products as <b>${esc(p.existing_product)}</b>. You can dismiss this one.</div>` : ''}
+        ${p.status === 'pending' ? `<div class="pact"><button class="primary" data-approve="${p.id}">Approve & add to Products</button><button class="ghost" data-dismiss="${p.id}">Dismiss</button></div>`
+          : `<div class="muted" style="font-size:13px">${p.status === 'approved' ? 'Approved' : 'Dismissed'}${p.resolved_by_name ? ' by ' + esc(p.resolved_by_name) : ''} · ${new Date(p.resolved_at).toLocaleString()}</div>`}
+      </div></div>`).join('') || `<p class="muted">${pendingStatus === 'pending' ? 'Nothing waiting. 👍' : 'None yet.'}</p>`}</div>`;
+  $('#view').onclick = async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.status) { pendingStatus = t.dataset.status; showPending(); return; }
+    if (t.dataset.dismiss) {
+      if (!confirm('Dismiss this item? It will not be added to Products.')) return;
+      try { await api(`/api/pending/${t.dataset.dismiss}/dismiss`, {}); toast('Dismissed'); showPending(); } catch (err) { toast(err.message, 'bad'); }
+    }
+    if (t.dataset.approve) {
+      const p = list.find((x) => x.id === Number(t.dataset.approve));
+      const values = { name: p.name, barcode: p.barcode || '', price_cents: p.price_cents, taxable: true, active: true, stock_qty: 0,
+        photo: p.has_image ? `/api/pending/${p.id}/image?v=${p.image_version}` : null };
+      if (await saveLoop('Approve: add to Products', productForm(), { ...values, rental_units: 1 },
+        (v) => api(`/api/pending/${p.id}/approve`, checkProduct(v)), 'Add to Products')) showPending();
+    }
+  };
+}
+function setPendingBadge(n) {
+  pendingCount = n;
+  const a = $('#nav a[href="#pending"]');
+  if (a) a.innerHTML = 'Pending items' + (n ? ` <span class="badge">${n}</span>` : '');
+}
+
+// ---------- customers & charge accounts ----------
+const CUSTOMER_FORM = [
+  { name: 'name', label: 'Name', required: true },
+  { name: 'company', label: 'Company' },
+  { name: 'phone', label: 'Phone' },
+  { name: 'email', label: 'Email', type: 'email' },
+  { name: 'address', label: 'Address (statements are mailed here)' },
+  { name: 'notes', label: 'Notes' },
+  { type: 'heading', name: '_acct', label: 'Charge account', hint: 'Lets this customer put purchases on their account and pay later.' },
+  { name: 'charge_account', label: 'Has a charge account', type: 'check' },
+  { name: 'credit_limit_cents', label: 'Credit limit (blank = no limit)', type: 'money' },
+  { name: 'active', label: 'Active', type: 'check' },
+];
+let custQuery = '', custAccountsOnly = false;
+async function showCustomers() {
+  const list = await api(`/api/customers?all=1&q=${encodeURIComponent(custQuery)}${custAccountsOnly ? '&accounts=1' : ''}`);
+  const owed = list.filter((c) => c.charge_account).reduce((a, c) => a + Math.max(0, c.balance_cents), 0);
+  $('#view').innerHTML = `<div class="bar"><h2>Customers</h2><input id="cq" placeholder="Search name, company or phone" value="${esc(custQuery)}">
+      <label class="check" style="margin:0"><input type="checkbox" id="cAcct" ${custAccountsOnly ? 'checked' : ''}> Charge accounts only</label>
+      <button class="primary" id="addCust">+ Add customer</button></div>
+    ${custAccountsOnly ? `<p class="muted" style="margin-top:0">Total owed on charge accounts: <b>${money(owed)}</b></p>` : ''}
+    <div class="tablewrap"><table class="list"><thead><tr><th>Customer</th><th>Phone</th><th>Address</th><th>Account</th><th class="num">Balance</th><th></th></tr></thead><tbody>
+    ${list.map((c) => `<tr class="${c.active ? '' : 'off'}"><td><b>${esc(c.name)}</b>${c.company ? `<div class="muted" style="font-size:12px">${esc(c.company)}</div>` : ''}</td>
+      <td>${esc(c.phone || '')}</td><td style="font-size:13px">${esc(c.address || '')}</td>
+      <td>${c.charge_account ? `<span class="pill rentpill">Charge account</span>${c.credit_limit_cents != null ? `<div class="muted" style="font-size:12px">Limit ${money(c.credit_limit_cents)}</div>` : ''}` : ''}</td>
+      <td class="num">${c.charge_account || c.balance_cents ? `<b>${balText(c.balance_cents)}</b>` : ''}</td>
+      <td style="white-space:nowrap"><button class="primary" data-open="${c.id}">Open</button> <button data-edit="${c.id}">Edit</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">No customers yet.</td></tr>'}</tbody></table></div>`;
+  let t; $('#cq').oninput = () => { clearTimeout(t); t = setTimeout(() => { custQuery = $('#cq').value; showCustomers().then(() => { const q = $('#cq'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 300); };
+  $('#cAcct').onchange = () => { custAccountsOnly = $('#cAcct').checked; showCustomers(); };
+  $('#addCust').onclick = async () => { if (await saveLoop('Add customer', CUSTOMER_FORM, { active: true }, (v) => api('/api/customers', v))) showCustomers(); };
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.edit) {
+      const c = list.find((x) => String(x.id) === b.dataset.edit);
+      if (await saveLoop('Edit ' + c.name, CUSTOMER_FORM, c, (v) => api('/api/customers/' + c.id, v, 'PUT'))) showCustomers();
+    }
+    if (b.dataset.open) showCustomer(b.dataset.open);
+  };
+}
+async function showCustomer(id) {
+  const c = await api('/api/customers/' + id);
+  const kinds = { charge: 'Charge', payment: 'Payment' };
+  $('#view').innerHTML = `<div class="bar"><button class="ghost" id="back">← Customers</button><h2>${esc(c.name)}${c.company ? ' · ' + esc(c.company) : ''}</h2>
+      ${c.charge_account ? '<button class="primary" id="takePay">Take payment</button><button id="stmt">Print statement</button>' : ''}<button id="editC">Edit</button></div>
+    <div class="cards">
+      <div class="stat"><div>Phone</div><b style="font-size:18px">${esc(c.phone || '—')}</b></div>
+      <div class="stat"><div>Address</div><div style="color:var(--ink)">${esc(c.address || '—')}</div></div>
+      ${c.charge_account ? `<div class="stat"><div>${c.balance_cents < 0 ? 'Credit on account' : 'Balance owed'}</div><b>${money(Math.abs(c.balance_cents))}</b></div>
+        <div class="stat"><div>Credit limit</div><b>${c.credit_limit_cents == null ? 'None' : money(c.credit_limit_cents)}</b></div>` : '<div class="stat"><div>Charge account</div><b style="font-size:18px">No</b></div>'}
+    </div>
+    ${c.charge_account || c.activity.length ? `<h3>Account activity</h3><div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Charge</th><th class="num">Payment</th><th></th></tr></thead><tbody>
+      ${c.activity.map((a) => `<tr class="${a.voided ? 'off' : ''}"><td>${new Date(a.created_at).toLocaleString()}</td><td>${kinds[a.kind]}${a.voided ? ' <span class="pill off">Void</span>' : ''}</td>
+        <td>${a.kind === 'charge' ? `Sale #${a.ref_id}${a.po_number ? ' · PO ' + esc(a.po_number) : ''}${a.job_address ? `<div class="muted" style="font-size:12px">${esc(a.job_address)}</div>` : ''}`
+          : `${esc(PAY_NAMES[a.method] || a.method)}${a.check_number ? ' #' + esc(a.check_number) : ''}`}</td>
+        <td class="num">${a.kind === 'charge' ? money(a.amount_cents) : ''}</td><td class="num">${a.kind === 'payment' ? money(a.amount_cents) : ''}</td>
+        <td>${a.kind === 'charge' ? `<button data-invoice="${a.ref_id}">Invoice</button>` : !a.voided ? `<button data-voidpay="${a.ref_id}">Void</button>` : ''}</td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">No account activity yet.</td></tr>'}</tbody></table></div>` : ''}
+    <h3 id="invHead">Invoices</h3>
+    <div class="bar invbar">
+      <input type="date" id="ciFrom"> to <input type="date" id="ciTo">
+      <span class="quick"><button data-r="month">This month</button><button data-r="last">Last month</button><button data-r="year">This year</button><button data-r="all">All</button></span>
+      <input id="ciQ" placeholder="Search invoice #, PO, job site, note" style="flex:1;min-width:200px">
+      <button id="ciPrint">🖨 Print list</button>${c.charge_account ? '<button id="ciStmt">🖨 Statement for these dates</button>' : ''}
+    </div>
+    <div id="ciList" class="muted">Loading…</div>
+    ${c.quotes.length ? `<h3>Quotes</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>PO</th><th>Status</th><th class="num">Total</th><th></th></tr></thead><tbody>
+      ${c.quotes.map((q) => `<tr><td>${q.id}</td><td>${new Date(q.created_at).toLocaleDateString()}</td><td>${esc(q.po_number || '')}</td><td>${esc(q.status)}</td>
+        <td class="num">${money(q.total_cents)}</td><td><button data-quote="${q.id}">Print</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  $('#back').onclick = () => showCustomers();
+  // ----- invoices for this customer: dates + search -----
+  const ymd = (d) => d.toLocaleDateString('en-CA');
+  const now = new Date();
+  const ranges = { month: [new Date(now.getFullYear(), now.getMonth(), 1), now], last: [new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth(), 0)],
+    year: [new Date(now.getFullYear(), 0, 1), now], all: [null, null] };
+  const setRange = (k) => { const [f, t] = ranges[k]; $('#ciFrom').value = f ? ymd(f) : ''; $('#ciTo').value = t ? ymd(t) : ''; };
+  setRange('all');
+  const ciQuery = () => new URLSearchParams({ from: $('#ciFrom').value, to: $('#ciTo').value, q: $('#ciQ').value.trim() });
+  let ciTimer;
+  async function loadInvoices() {
+    try {
+      const r = await api(`/api/customers/${c.id}/sales?` + ciQuery());
+      const t = r.totals;
+      $('#ciList').classList.remove('muted');
+      $('#ciList').innerHTML = `<div class="cards" style="margin-top:0"><div class="stat"><div>Invoices</div><b>${t.n}</b></div><div class="stat"><div>Total</div><b>${money(t.total)}</b></div>
+          <div class="stat"><div>Sales tax</div><b>${money(t.tax)}</b></div>${t.on_account ? `<div class="stat"><div>Charged to account</div><b>${money(t.on_account)}</b></div>` : ''}</div>
+        <div class="tablewrap"><table class="list"><thead><tr><th>Invoice</th><th>Date</th><th>PO / job</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
+        ${r.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>#${s.id}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td><td>${new Date(s.created_at).toLocaleString()}</td>
+          <td>${esc(s.po_number ? 'PO ' + s.po_number : '')}${s.job_address ? `<div class="muted" style="font-size:12px">${esc(s.job_address)}</div>` : ''}${s.invoice_note ? `<div class="muted" style="font-size:12px">🗒 ${esc(s.invoice_note)}</div>` : ''}</td>
+          <td>${esc(paidByText(s))}</td><td class="num">${money(s.total_cents)}</td>
+          <td style="white-space:nowrap"><button data-invoice="${s.id}">Invoice</button> <button data-receipt="${s.id}">Receipt</button> <button class="wa" data-send="${s.id}">Send</button></td></tr>`).join('')
+          || `<tr><td colspan="6" class="muted">${$('#ciQ').value.trim() ? 'No invoices match that search.' : 'No invoices in these dates.'}</td></tr>`}</tbody></table></div>`;
+    } catch (e) { $('#ciList').textContent = e.message; }
+  }
+  $('#ciFrom').onchange = $('#ciTo').onchange = loadInvoices;
+  $('#ciQ').oninput = () => { clearTimeout(ciTimer); ciTimer = setTimeout(loadInvoices, 300); };
+  document.querySelector('.invbar .quick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; setRange(b.dataset.r); loadInvoices(); };
+  $('#ciPrint').onclick = () => window.open(`/history?id=${c.id}&` + ciQuery(), '_blank', 'width=900,height=900');
+  if ($('#ciStmt')) $('#ciStmt').onclick = () => {
+    const f = $('#ciFrom').value || '2000-01-01', t = $('#ciTo').value || ymd(now);
+    window.open(`/statement?id=${c.id}&from=${f}&to=${t}`, '_blank', 'width=820,height=900');
+  };
+  loadInvoices();
+  $('#editC').onclick = async () => { if (await saveLoop('Edit ' + c.name, CUSTOMER_FORM, c, (v) => api('/api/customers/' + c.id, v, 'PUT'))) showCustomer(id); };
+  if (c.charge_account) {
+    $('#stmt').onclick = () => window.open('/statement?id=' + c.id, '_blank', 'width=820,height=900');
+    $('#takePay').onclick = async () => {
+      if (await saveLoop('Payment on account · ' + c.name, [
+        { name: 'amount_cents', label: `Amount paid (balance ${balText(c.balance_cents)})`, type: 'money', required: true },
+        { name: 'method', label: 'Paid with', type: 'select', options: [{ value: 'check', label: 'Check' }, { value: 'cash', label: 'Cash' }, { value: 'card', label: 'Card' }, { value: 'other', label: 'Other' }] },
+        { name: 'check_number', label: 'Check number (for checks)' },
+        { name: 'note', label: 'Note' },
+      ], { amount_cents: Math.max(0, c.balance_cents), method: 'check' }, (v) => api(`/api/customers/${c.id}/payments`, v), 'Record payment')) showCustomer(id);
+    };
+  }
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.receipt) window.open('/receipt?id=' + b.dataset.receipt, '_blank', 'width=420,height=700');
+    if (b.dataset.invoice) window.open('/invoice?id=' + b.dataset.invoice, '_blank', 'width=900,height=900');
+    if (b.dataset.quote) window.open('/quote?id=' + b.dataset.quote, '_blank', 'width=420,height=700');
+    if (b.dataset.send) openSendChooser(b.dataset.send);
+    if (b.dataset.voidpay && confirm('Void this payment? The amount goes back on the balance.')) {
+      try { await api(`/api/account-payments/${b.dataset.voidpay}/void`, {}); toast('Payment voided'); showCustomer(id); } catch (err) { toast(err.message, 'bad'); }
+    }
+  };
+}
+
+// ---------- reports ----------
+const isoDay = (d) => d.toLocaleDateString('en-CA');
+function rangeFor(preset) {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  const monday = new Date(now); monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  return {
+    today: [now, now], week: [monday, now], month: [new Date(y, m, 1), now], lastmonth: [new Date(y, m - 1, 1), new Date(y, m, 0)],
+    year: [new Date(y, 0, 1), now], lastyear: [new Date(y - 1, 0, 1), new Date(y - 1, 11, 31)],
+  }[preset].map(isoDay);
+}
+let rep = null;
+function csvDownload(name, rows) {
+  const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = name; a.click();
+}
+const dollars = (c) => (c / 100).toFixed(2);
+async function showReports() {
+  const locs = await api('/api/locations');
+  if (!rep) { const [from, to] = rangeFor('month'); rep = { kind: 'tax', group: 'day', from, to, location_id: '', preset: 'month' }; }
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const q = new URLSearchParams({ from: rep.from, to: rep.to, tz, group: rep.group, location_id: rep.location_id });
+  const presets = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'This year'], ['lastyear', 'Last year']];
+  let body = '';
+  if (rep.kind === 'tax') {
+    const d = await api('/api/reports/tax?' + q);
+    const label = (p) => {
+      const dt = new Date(p + 'T12:00:00');
+      return rep.group === 'day' ? dt.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+        : rep.group === 'week' ? 'Week of ' + dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+        : rep.group === 'month' ? dt.toLocaleDateString([], { month: 'long', year: 'numeric' }) : String(dt.getFullYear());
+    };
+    rep.last = { kind: 'tax', rows: [['Period', 'Sales', 'Taxable sales', 'Non-taxable sales', 'Sales before tax', 'Tax collected', 'Total with tax'],
+      ...d.rows.map((r) => [label(r.period), r.sales, dollars(r.taxable), dollars(r.nontaxable), dollars(r.subtotal), dollars(r.tax), dollars(r.total)]),
+      ['TOTAL', d.totals.sales, dollars(d.totals.taxable), dollars(d.totals.nontaxable), dollars(d.totals.subtotal), dollars(d.totals.tax), dollars(d.totals.total)]] };
+    body = `<div class="cards"><div class="stat"><div>Tax collected</div><b>${money(d.totals.tax)}</b></div>
+        <div class="stat"><div>Taxable sales</div><b>${money(d.totals.taxable)}</b></div><div class="stat"><div>Non-taxable sales</div><b>${money(d.totals.nontaxable)}</b></div>
+        <div class="stat"><div>Total with tax</div><b>${money(d.totals.total)}</b></div></div>
+      <div class="tablewrap"><table class="list"><thead><tr><th>${{ day: 'Day', week: 'Week', month: 'Month', year: 'Year' }[rep.group]}</th><th class="num">Sales</th><th class="num">Taxable sales</th><th class="num">Non-taxable</th><th class="num">Tax collected</th><th class="num">Total with tax</th></tr></thead><tbody>
+      ${d.rows.map((r) => `<tr><td>${label(r.period)}</td><td class="num">${r.sales}</td><td class="num">${money(r.taxable)}</td><td class="num">${money(r.nontaxable)}</td><td class="num"><b>${money(r.tax)}</b></td><td class="num">${money(r.total)}</td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">No sales in this period.</td></tr>'}
+      ${d.rows.length > 1 ? `<tr class="totrow"><td>Total</td><td class="num">${d.totals.sales}</td><td class="num">${money(d.totals.taxable)}</td><td class="num">${money(d.totals.nontaxable)}</td><td class="num">${money(d.totals.tax)}</td><td class="num">${money(d.totals.total)}</td></tr>` : ''}</tbody></table></div>
+      <p class="muted" style="font-size:13px">Voided sales are not counted. Delivery and fuel charges count as taxable when they were marked taxable.</p>`;
+  } else {
+    const d = await api('/api/reports/money?' + q);
+    rep.last = { kind: 'money', rows: [['Date', 'Type', 'From', 'Check #', 'Amount'],
+      ...d.checks.map((c) => [new Date(c.created_at).toLocaleDateString(), c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id, c.customer, c.check_number, dollars(c.amount_cents)]),
+      [], ['Cash from sales', '', '', '', dollars(d.cash_sales)], ['Cash account payments', '', '', '', dollars(d.cash_account)], ['Cash refunds', '', '', '', '-' + dollars(d.cash_refunds)],
+      ['Cash total', '', '', '', dollars(d.cash_net)], ['Checks total', '', '', '', dollars(d.checks_total)], ['Cash + checks', '', '', '', dollars(d.cash_net + d.checks_total)]] };
+    body = `<div class="cards"><div class="stat"><div>Cash (after refunds)</div><b>${money(d.cash_net)}</b></div>
+        <div class="stat"><div>Checks (${d.check_count})</div><b>${money(d.checks_total)}</b></div>
+        <div class="stat"><div>Cash + checks</div><b>${money(d.cash_net + d.checks_total)}</b></div></div>
+      <p class="muted" style="margin-top:0">Cash from sales ${money(d.cash_sales)} · cash paid on accounts ${money(d.cash_account)} · cash refunds −${money(d.cash_refunds)}. Card and gift card payments are not included.</p>
+      ${d.days.length > 1 ? `<h3>By day</h3><div class="tablewrap"><table class="list"><thead><tr><th>Day</th><th class="num">Cash</th><th class="num">Checks</th><th class="num">Total</th></tr></thead><tbody>
+        ${d.days.map((x) => `<tr><td>${new Date(x.day + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</td><td class="num">${money(x.cash)}</td><td class="num">${money(x.checks)} <span class="muted">(${x.check_count})</span></td><td class="num"><b>${money(x.cash + x.checks)}</b></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <h3>Checks received</h3><div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>From</th><th>For</th><th>Check #</th><th class="num">Amount</th><th>Deposited</th></tr></thead><tbody>
+        ${d.checks.map((c) => `<tr><td>${new Date(c.created_at).toLocaleString()}</td><td>${esc(c.customer || '')}</td><td>${c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id}</td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td><td>${c.deposit_id ? 'Deposit #' + c.deposit_id : '<span class="muted">Not yet</span>'}</td></tr>`).join('')
+          || '<tr><td colspan="6" class="muted">No checks in this period.</td></tr>'}</tbody></table></div>`;
+  }
+  $('#view').innerHTML = `<div class="bar"><h2>Reports</h2>
+      <button class="${rep.kind === 'tax' ? 'primary' : 'ghost'}" data-kind="tax">Sales tax</button><button class="${rep.kind === 'money' ? 'primary' : 'ghost'}" data-kind="money">Cash & checks</button></div>
+    <div class="bar filters">
+      ${presets.map(([k, l]) => `<button class="${rep.preset === k ? 'primary' : 'ghost'}" data-preset="${k}">${l}</button>`).join('')}
+      <input type="date" id="rFrom" value="${rep.from}"> to <input type="date" id="rTo" value="${rep.to}">
+      ${rep.kind === 'tax' ? `<select id="rGroup">${['day', 'week', 'month', 'year'].map((g) => `<option value="${g}" ${rep.group === g ? 'selected' : ''}>By ${g}</option>`).join('')}</select>` : ''}
+      <select id="rLoc"><option value="">All locations</option>${locs.map((l) => `<option value="${l.id}" ${String(l.id) === String(rep.location_id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+      <button class="ghost" id="rCsv">Download for Excel / QuickBooks</button><button class="ghost" onclick="print()">Print</button>
+    </div>${body}`;
+  $('#view').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.kind) { rep.kind = b.dataset.kind; showReports(); }
+    if (b.dataset.preset) { [rep.from, rep.to] = rangeFor(b.dataset.preset); rep.preset = b.dataset.preset; showReports(); }
+  };
+  const refresh = () => { rep.from = $('#rFrom').value; rep.to = $('#rTo').value; rep.preset = ''; showReports(); };
+  $('#rFrom').onchange = refresh; $('#rTo').onchange = refresh;
+  if ($('#rGroup')) $('#rGroup').onchange = () => { rep.group = $('#rGroup').value; showReports(); };
+  $('#rLoc').onchange = () => { rep.location_id = $('#rLoc').value; showReports(); };
+  $('#rCsv').onclick = () => csvDownload(`${rep.kind === 'tax' ? 'sales-tax' : 'cash-and-checks'}_${rep.from}_to_${rep.to}.csv`, rep.last.rows);
+}
+
+// ---------- bank deposits ----------
+let depLoc = '';
+async function showDeposits() {
+  const [locs, pend, hist] = await Promise.all([api('/api/locations'), api('/api/deposits/pending?location_id=' + depLoc), api('/api/deposits')]);
+  $('#view').innerHTML = `<div class="bar"><h2>Bank deposit</h2>
+      <select id="dLoc"><option value="">All locations</option>${locs.map((l) => `<option value="${l.id}" ${String(l.id) === String(depLoc) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+    <div class="settings" style="max-width:none">
+      <p class="muted" style="margin-top:0">Cash and checks taken in since the last deposit. Uncheck any check you're not depositing yet.</p>
+      <div class="cards">
+        <div class="stat"><div>Cash collected since last deposit</div><b>${money(pend.cash_net)}</b>
+          <div style="font-size:12px">Sales ${money(pend.cash_sales)} + accounts ${money(pend.cash_account)} − refunds ${money(pend.cash_refunds)}</div></div>
+        <div class="stat"><div>Checks waiting</div><b>${pend.check_count}</b></div>
+        <div class="stat"><div>Deposit total</div><b id="dTotal"></b></div>
+      </div>
+      <label class="check"><input type="checkbox" id="dCashOn" checked> Include cash</label>
+      <label for="dCash">Cash to deposit (change it if you keep some in the drawer)</label><input id="dCash" inputmode="decimal" value="${dollars(Math.max(0, pend.cash_net))}" style="max-width:220px">
+      <h3>Checks</h3>
+      <div class="tablewrap"><table class="list"><thead><tr><th><input type="checkbox" id="dAll" checked></th><th>Date</th><th>From</th><th>Check #</th><th class="num">Amount</th></tr></thead><tbody>
+        ${pend.checks.map((c) => `<tr><td><input type="checkbox" class="dChk" value="${c.key}" data-amt="${c.amount_cents}" checked></td><td>${new Date(c.created_at).toLocaleDateString()}</td>
+          <td>${esc(c.customer || '')}<div class="muted" style="font-size:12px">${c.kind === 'account' ? 'Account payment' : 'Sale #' + c.ref_id}</div></td><td>${esc(c.check_number || '')}</td><td class="num">${money(c.amount_cents)}</td></tr>`).join('')
+          || '<tr><td colspan="5" class="muted">No checks waiting.</td></tr>'}</tbody></table></div>
+      <label for="dNote">Note (optional)</label><input id="dNote" maxlength="300">
+      <button class="primary" id="dMake" style="margin-top:14px">Create deposit slip</button>
+    </div>
+    <h3>Past deposits</h3><div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Date</th><th>Location</th><th class="num">Cash</th><th class="num">Checks</th><th class="num">Total</th><th></th></tr></thead><tbody>
+      ${hist.map((d) => `<tr><td>${d.id}</td><td>${new Date(d.created_at).toLocaleString()}<div class="muted" style="font-size:12px">${esc(d.created_by_name || '')}</div></td><td>${esc(d.location_name || 'All')}</td>
+        <td class="num">${money(d.cash_cents)}</td><td class="num">${money(d.checks_cents)} <span class="muted">(${d.check_count})</span></td><td class="num"><b>${money(d.cash_cents + d.checks_cents)}</b></td>
+        <td><button data-slip="${d.id}">Print slip</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No deposits yet.</td></tr>'}</tbody></table></div>`;
+  const total = () => {
+    const cash = $('#dCashOn').checked ? (toCents($('#dCash').value) || 0) : 0;
+    const checks = $$('.dChk').filter((x) => x.checked).reduce((a, x) => a + Number(x.dataset.amt), 0);
+    $('#dTotal').textContent = money(cash + checks); return { cash, checks };
+  };
+  total();
+  $('#dLoc').onchange = () => { depLoc = $('#dLoc').value; showDeposits(); };
+  $('#dAll').onchange = () => { $$('.dChk').forEach((x) => { x.checked = $('#dAll').checked; }); total(); };
+  $('#view').oninput = total; $('#view').onchange = (e) => { if (e.target.id !== 'dLoc') total(); };
+  $('#dMake').onclick = async () => {
+    const t = total();
+    if (!t.cash && !t.checks) { toast('Nothing to deposit', 'bad'); return; }
+    if ($('#dCashOn').checked && toCents($('#dCash').value) === null) { toast('Enter the cash amount', 'bad'); return; }
+    if (!confirm(`Create a deposit of ${money(t.cash + t.checks)}? These checks and the cash will be marked as deposited.`)) return;
+    try {
+      const r = await api('/api/deposits', { location_id: depLoc || null, include_cash: $('#dCashOn').checked, cash_cents: t.cash,
+        check_keys: $$('.dChk').filter((x) => x.checked).map((x) => x.value), note: $('#dNote').value });
+      window.open('/deposit?id=' + r.id, '_blank', 'width=760,height=900'); showDeposits();
+    } catch (err) { toast(err.message, 'bad'); }
+  };
+  $('#view').onclick = (e) => { const b = e.target.closest('[data-slip]'); if (b) window.open('/deposit?id=' + b.dataset.slip, '_blank', 'width=760,height=900'); };
+}
+
+// ---------- QuickBooks Online ----------
+async function showQuickBooks() {
+  const s = await api('/api/qbo/status');
+  const msg = new URLSearchParams(location.hash.split('?')[1] || '').get('qbo');
+  if (location.hash.includes('?')) history.replaceState(null, '', '#quickbooks');
+  let html = `<div class="bar"><h2>QuickBooks Online</h2>${s.connected ? '<button class="ghost" id="qbDisc">Disconnect</button>' : ''}</div>
+    ${msg ? `<div class="warn" style="margin-bottom:12px">${esc(msg)}</div>` : ''}`;
+  if (!s.configured) {
+    $('#view').innerHTML = html + `<div class="settings"><p>QuickBooks isn't set up on this server yet. The platform administrator needs to add
+      <b>QBO_CLIENT_ID</b> and <b>QBO_CLIENT_SECRET</b> in Render → Environment.</p></div>`; return;
+  }
+  if (!s.connected) {
+    $('#view').innerHTML = html + `<div class="settings" style="max-width:620px">
+      <p>Connect this business's QuickBooks Online company. MultiPOS will send:</p>
+      <ul><li><b>One summary per day for each location</b>: sales, rentals, delivery & fuel, sales tax, and how customers paid.</li>
+        <li><b>Charge account payments and rental refunds</b>, inside that same daily summary.</li>
+        <li><b>Each bank deposit</b> you make in MultiPOS, so it matches your bank statement.</li></ul>
+      <p class="muted">Today's activity is sent after the day ends. You'll pick which QuickBooks accounts to use next.${s.environment === 'sandbox' ? ' <b>Test mode:</b> this connects to a QuickBooks sandbox company.' : ''}</p>
+      <button class="qbbtn" id="qbConnect">Connect to QuickBooks</button></div>`;
+    $('#qbConnect').onclick = async () => { try { location.href = (await api('/api/qbo/connect')).url; } catch (e) { toast(e.message, 'bad'); } };
+    return;
+  }
+  // Connected: account setup + sync.
+  let accounts = [];
+  try { accounts = await api('/api/qbo/accounts'); } catch (e) { html += `<div class="warn" style="margin-bottom:12px">${esc(e.message)}</div>`; }
+  const pick = (role) => {
+    const opts = accounts.filter((a) => role.types.includes(a.type));
+    return `<label>${esc(role.label)} <span class="muted" style="font-weight:400">(${role.types.join(' or ')})</span></label>
+      <select data-role="${role.key}"><option value="">Choose an account…</option>${opts.map((a) => `<option value="${a.id}" ${String(s.mapping[role.key]) === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`;
+  };
+  const yday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
+  const kindText = (l) => l.kind === 'deposit' ? `Deposit #${l.deposit_id}` : `${new Date(l.day + 'T12:00:00').toLocaleDateString()} · ${esc(l.location_name || '')}`;
+  html += `<div class="cards">
+      <div class="stat"><div>Connected to</div><b style="font-size:18px">${esc(s.company_name || 'QuickBooks company ' + s.realm_id)}</b>
+        <div style="font-size:12px">${s.connected_env === 'sandbox' ? 'Sandbox (test) company' : 'Live company'}</div></div>
+      <div class="stat"><div>Last sync</div><b style="font-size:18px">${s.last_sync_at ? new Date(s.last_sync_at).toLocaleString() : 'Not yet'}</b>
+        ${s.last_sync_error ? `<div style="font-size:12px;color:#c0392b">${esc(s.last_sync_error)}</div>` : ''}</div>
+      <div class="stat"><div>Status</div><b style="font-size:18px">${s.setup_done ? '✓ Syncing every hour' : 'Finish setup below'}</b></div>
+    </div>
+    <div class="settings" style="max-width:none">
+      <h3 style="margin-top:0">1. Accounts</h3>
+      <p class="muted" style="margin-top:0">Easiest: create the recommended MultiPOS accounts in QuickBooks, then choose your bank account. Have your accountant look this over once.</p>
+      <button id="qbMake">Create recommended accounts</button>
+      <div class="grid2" id="qbMap">${s.roles.map(pick).join('')}</div>
+      <h3>2. Start date</h3>
+      <p class="muted" style="margin-top:0">Days before this date are never sent (so nothing gets entered twice if your books already have them).</p>
+      <input type="date" id="qbFrom" value="${s.sync_from || yday}" style="max-width:220px">
+      <label>Time zone the business day follows</label>
+      <input id="qbTz" value="${esc(s.time_zone || 'America/Chicago')}" style="max-width:260px">
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="primary" id="qbSave">Save setup</button>
+        <button id="qbSync" ${s.setup_done ? '' : 'disabled'}>Sync now</button>
+        <input type="date" id="qbPrevDay" value="${yday}" style="max-width:180px"><button id="qbPrev">Preview a day</button>
+      </div>
+      <div id="qbPreview"></div>
+    </div>
+    <h3>Sent to QuickBooks</h3>
+    <div class="tablewrap"><table class="list"><thead><tr><th>What</th><th class="num">Amount</th><th>Status</th><th>When</th></tr></thead><tbody>
+      ${(s.log || []).map((l) => `<tr><td>${kindText(l)}</td><td class="num">${l.amount_cents != null ? money(l.amount_cents) : ''}</td>
+        <td>${l.status === 'ok' ? `<span class="pill">Sent</span>${l.qbo_id ? ` <span class="muted" style="font-size:12px">QuickBooks #${esc(l.qbo_id)}</span>` : ''}` : `<span class="pill off">Problem</span><div style="font-size:12px;color:#c0392b">${esc(l.error || '')}</div>`}</td>
+        <td>${new Date(l.synced_at).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Nothing sent yet.</td></tr>'}</tbody></table></div>`;
+  $('#view').innerHTML = html;
+  const mapping = () => Object.fromEntries($$('#qbMap select').map((x) => [x.dataset.role, x.value]));
+  $('#qbDisc').onclick = async () => {
+    if (!confirm('Disconnect QuickBooks? Syncing stops. Nothing already in QuickBooks is removed.')) return;
+    await api('/api/qbo/disconnect', {}); showQuickBooks();
+  };
+  $('#qbMake').onclick = async () => {
+    $('#qbMake').disabled = true; $('#qbMake').textContent = 'Creating…';
+    try { const r = await api('/api/qbo/accounts/recommended', {}); toast(r.created.length ? `Created ${r.created.length} accounts in QuickBooks` : 'Accounts already there; setup filled in'); showQuickBooks(); }
+    catch (e) { toast(e.message, 'bad'); $('#qbMake').disabled = false; $('#qbMake').textContent = 'Create recommended accounts'; }
+  };
+  $('#qbSave').onclick = async () => {
+    try {
+      const r = await api('/api/qbo/settings', { mapping: mapping(), sync_from: $('#qbFrom').value, time_zone: $('#qbTz').value.trim() }, 'PUT');
+      toast(r.setup_done ? 'Saved. Syncing will start within the hour, or press Sync now.' : 'Saved. Some accounts still need choosing.'); showQuickBooks();
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  $('#qbSync').onclick = async () => {
+    $('#qbSync').disabled = true; $('#qbSync').textContent = 'Syncing…';
+    try {
+      const r = await api('/api/qbo/sync', {});
+      if (r.skipped) toast(r.skipped, 'bad');
+      else toast(`Sent ${r.days_sent} days, updated ${r.days_updated}, ${r.deposits_sent} deposits${r.errors.length ? ` · ${r.errors.length} problems` : ''}`, r.errors.length ? 'bad' : 'ok');
+      showQuickBooks();
+    } catch (e) { toast(e.message, 'bad'); $('#qbSync').disabled = false; $('#qbSync').textContent = 'Sync now'; }
+  };
+  $('#qbPrev').onclick = async () => {
+    try {
+      const r = await api('/api/qbo/preview?day=' + $('#qbPrevDay').value);
+      $('#qbPreview').innerHTML = r.entries.length ? r.entries.map((e) => e.error ? `<p class="warn">${esc(e.location)}: ${esc(e.error)}</p>` : `<h4 style="margin:14px 0 6px">${esc(e.location)} · journal entry ${money(e.total_cents)}</h4>
+        <table class="list"><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th><th>Note</th></tr></thead><tbody>
+        ${e.lines.map((l) => `<tr><td>${esc(l.account)}</td><td class="num">${l.posting === 'Debit' ? money(l.cents) : ''}</td><td class="num">${l.posting === 'Credit' ? money(l.cents) : ''}</td><td style="font-size:13px">${esc(l.desc)}</td></tr>`).join('')}</tbody></table>`).join('')
+        : '<p class="muted">No activity that day.</p>';
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
+// ---------- refunds owed (checks to mail) ----------
+let refundStatus = 'owed';
+async function showRefunds() {
+  const data = await api('/api/refunds?status=' + refundStatus);
+  const tab = (s, label) => `<button class="${s === refundStatus ? 'primary' : 'ghost'}" data-status="${s}">${label}</button>`;
+  const methodName = { cash: 'Cash', gift_card: 'Gift card', check: 'Check' };
+  $('#view').innerHTML = `<div class="bar"><h2>Refunds</h2>${tab('owed', `Checks to mail (${data.owed.n})`)}${tab('paid', 'Checks sent')}${tab('done', 'Cash & gift card refunds')}</div>
+    ${refundStatus === 'owed' ? `<p class="muted" style="margin-top:0">Rental refunds the customer chose to get by check. Total owed: <b>${money(data.owed.total)}</b>. Mark each one paid when the check is mailed.</p>` : ''}
+    <div class="tablewrap"><table class="list"><thead><tr><th>Date</th><th>Customer</th><th>For</th><th>How</th><th class="num">Amount</th><th></th></tr></thead><tbody>
+    ${data.refunds.map((f) => `<tr><td>${new Date(f.created_at).toLocaleDateString()}<div class="muted" style="font-size:12px">${esc(f.location_name || '')} · ${esc(f.created_by_name || '')}</div></td>
+      <td><b>${esc(f.customer_name || '')}</b><div class="muted" style="font-size:12px">${esc(f.customer_phone || '')}</div>${f.mailing_address ? `<div style="font-size:13px">${esc(f.mailing_address)}</div>` : ''}</td>
+      <td>${f.rental_item ? 'Rental #' + f.rental_id + ': ' + esc(f.rental_item) : ''}${f.note ? `<div class="muted" style="font-size:12px">${esc(f.note)}</div>` : ''}</td>
+      <td>${methodName[f.method]}${f.gift_code ? `<div class="muted" style="font-size:12px">${esc(f.gift_code)}</div>` : ''}${f.check_number ? `<div class="muted" style="font-size:12px">Check #${esc(f.check_number)}</div>` : ''}${f.paid_at ? `<div class="muted" style="font-size:12px">Sent ${new Date(f.paid_at).toLocaleDateString()}${f.paid_by_name ? ' by ' + esc(f.paid_by_name) : ''}</div>` : ''}</td>
+      <td class="num"><b>${money(f.amount_cents)}</b></td>
+      <td>${f.status === 'owed' ? `<button class="primary" data-paid="${f.id}">Mark check sent</button>` : ''}</td></tr>`).join('')
+      || `<tr><td colspan="6" class="muted">${refundStatus === 'owed' ? 'No checks owed. 👍' : 'None yet.'}</td></tr>`}</tbody></table></div>`;
+  $('#view').onclick = async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.status) { refundStatus = t.dataset.status; showRefunds(); return; }
+    if (t.dataset.paid) {
+      const num = prompt('Check number (optional):', '');
+      if (num === null) return;
+      try { await api(`/api/refunds/${t.dataset.paid}/paid`, { check_number: num }); toast('Marked as sent'); showRefunds(); }
+      catch (err) { toast(err.message, 'bad'); }
+    }
+  };
+}
+
+// ---------- locations & registers ----------
+async function showLocations() {
+  const [locs, regs] = await Promise.all([api('/api/locations'), api('/api/registers')]);
+  const isOwner = role === 'owner';
+  $('#view').innerHTML = `<div class="bar"><h2>Locations & registers</h2>${isOwner ? '<button class="primary" id="addLoc">+ Add location</button>' : ''}</div>
+    ${locs.map((l) => `<div class="locbox"><h3><span>${esc(l.name)} ${l.active ? '' : '<span class="pill off">Off</span>'}</span>${isOwner ? `<span><button data-hours="${l.id}">Hours</button> <button data-editloc="${l.id}">Edit</button></span>` : ''}</h3>
+      <div class="muted">${esc(l.address || 'No address')} · Sales tax ${Number(l.tax_rate)}%</div>
+      <div class="muted">🕘 ${esc(Hours.hoursText(l.hours))}</div>
+      <div class="regs">${regs.filter((r) => r.location_id === l.id).map((r) => `<div class="reg">${esc(r.name)} ${r.active ? '' : '<span class="pill off">Off</span>'}<button data-editreg="${r.id}">Edit</button></div>`).join('')}
+        <button data-addreg="${l.id}">+ Register</button></div></div>`).join('') || '<p class="muted">No locations yet.</p>'}`;
+  const locFields = [
+    { name: 'name', label: 'Location name', required: true },
+    { name: 'address', label: 'Address (printed on receipts)' },
+    { name: 'phone', label: 'Phone (printed on receipts)' },
+    { name: 'tax_rate', label: 'Sales tax rate (%)', type: 'number', required: true },
+    { name: 'active', label: 'Location is open for sales', type: 'check' },
+  ];
+  if (isOwner) $('#addLoc').onclick = async () => {
+    if (await saveLoop('Add location', locFields, { tax_rate: 8.25, active: true }, (v) => api('/api/locations', { ...v, active: true }))) showLocations();
+  };
+  $('#view').onclick = async (e) => {
+    const t = e.target;
+    if (t.dataset.editloc) {
+      const l = locs.find((x) => x.id === Number(t.dataset.editloc));
+      if (await saveLoop('Edit location', locFields, { ...l, tax_rate: Number(l.tax_rate) }, (v) => api('/api/locations/' + l.id, { ...v, hours: l.hours }, 'PUT'))) showLocations();
+    }
+    if (t.dataset.hours) editHours(locs.find((x) => x.id === Number(t.dataset.hours)));
+    if (t.dataset.addreg) {
+      if (await saveLoop('Add register', [{ name: 'name', label: 'Register name', required: true }], { name: 'Register ' + (regs.filter((r) => r.location_id === Number(t.dataset.addreg)).length + 1) },
+        (v) => api('/api/registers', { ...v, location_id: Number(t.dataset.addreg) }))) showLocations();
+    }
+    if (t.dataset.editreg) {
+      const r = regs.find((x) => x.id === Number(t.dataset.editreg));
+      if (await saveLoop('Edit register', [{ name: 'name', label: 'Register name', required: true }, { name: 'active', label: 'Register in use', type: 'check' }], r,
+        (v) => api('/api/registers/' + r.id, v, 'PUT'))) showLocations();
+    }
+  };
+}
+
+// Business hours for one location. Rentals only count time while the store is open.
+function editHours(l) {
+  let back = $('#hoursModal');
+  if (!back) {
+    back = document.createElement('div'); back.className = 'modal-back'; back.id = 'hoursModal';
+    back.innerHTML = `<form class="modal"><h2>Business hours</h2>
+      <p class="muted" style="margin-top:0">Rental due-back times skip the hours you're closed. A half-day rental counts only open hours.</p>
+      <table class="hourtbl"><tbody></tbody></table>
+      <button type="button" class="ghost" data-copy style="margin-top:8px">Copy Monday to Tue–Fri</button>
+      <div class="err" data-err></div>
+      <div class="actions"><button type="button" class="ghost" data-x>Cancel</button><button class="primary">Save hours</button></div></form>`;
+    document.body.appendChild(back);
+    back.querySelector('[data-x]').onclick = () => back.classList.remove('open');
+  }
+  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const h = l.hours || {};
+  const tb = back.querySelector('tbody');
+  tb.innerHTML = order.map((d) => { const v = h[d]; return `<tr data-d="${d}">
+      <td><b>${Hours.DAY_NAMES[d]}</b></td>
+      <td><label class="chk"><input type="checkbox" data-open ${v ? 'checked' : ''}> Open</label></td>
+      <td><input type="time" data-from value="${v ? v.open : '08:00'}" ${v ? '' : 'disabled'}></td>
+      <td>to</td><td><input type="time" data-to value="${v ? v.close : '17:00'}" ${v ? '' : 'disabled'}></td></tr>`; }).join('');
+  tb.onchange = (e) => { if (e.target.dataset.open !== undefined) { const r = e.target.closest('tr'); r.querySelectorAll('input[type=time]').forEach((i) => { i.disabled = !e.target.checked; }); } };
+  const row = (d) => tb.querySelector(`tr[data-d="${d}"]`);
+  back.querySelector('[data-copy]').onclick = () => {
+    const m = row('mon');
+    for (const d of ['tue', 'wed', 'thu', 'fri']) {
+      const r = row(d);
+      r.querySelector('[data-open]').checked = m.querySelector('[data-open]').checked;
+      r.querySelector('[data-from]').value = m.querySelector('[data-from]').value;
+      r.querySelector('[data-to]').value = m.querySelector('[data-to]').value;
+      r.querySelectorAll('input[type=time]').forEach((i) => { i.disabled = !m.querySelector('[data-open]').checked; });
+    }
+  };
+  const err = back.querySelector('[data-err]'); err.textContent = '';
+  back.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault(); err.textContent = '';
+    const hours = {};
+    for (const d of order) {
+      const r = row(d);
+      hours[d] = r.querySelector('[data-open]').checked ? { open: r.querySelector('[data-from]').value, close: r.querySelector('[data-to]').value } : null;
+    }
+    try {
+      Hours.cleanHours(hours);
+      await api('/api/locations/' + l.id, { name: l.name, address: l.address, phone: l.phone, tax_rate: Number(l.tax_rate), active: l.active, hours }, 'PUT');
+      back.classList.remove('open'); toast('Hours saved'); showLocations();
+    } catch (x) { err.textContent = x.message; }
+  };
+  back.classList.add('open');
+}
+
+// ---------- employees ----------
+async function showEmployees() {
+  const list = await api('/api/users');
+  const roles = role === 'owner' ? ['owner', 'manager', 'cashier'] : ['cashier'];
+  const roleOpts = roles.map((r) => ({ value: r, label: r[0].toUpperCase() + r.slice(1) }));
+  $('#view').innerHTML = `<div class="bar"><h2>Employees</h2><button class="primary" id="addUser">+ Add employee</button></div>
+    <p class="muted" style="margin-top:0">Owners manage everything. Managers handle products, registers, cashiers and sales reports. Cashiers only use checkout.</p>
+    <div class="tablewrap"><table class="list"><thead><tr><th>Name</th><th>Login email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+    ${list.map((u) => `<tr class="${u.active ? '' : 'off'}"><td><b>${esc(u.name)}</b></td><td>${esc(u.email)}</td><td>${esc(u.role)}</td><td>${u.active ? '<span class="pill">Active</span>' : '<span class="pill off">Off</span>'}</td>
+      <td>${roles.includes(u.role) ? `<button data-edit="${u.id}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+  $('#addUser').onclick = async () => {
+    if (await saveLoop('Add employee', [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'email', label: 'Login email', type: 'email', required: true },
+      { name: 'role', label: 'Role', type: 'select', options: roleOpts },
+      { name: 'password', label: 'Password (8+ characters)', type: 'password', required: true },
+    ], { role: 'cashier' }, (v) => api('/api/users', v))) showEmployees();
+  };
+  $('#view').onclick = async (e) => {
+    const b = e.target.closest('[data-edit]'); if (!b) return;
+    const u = list.find((x) => x.id === Number(b.dataset.edit));
+    if (await saveLoop('Edit ' + u.name, [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'role', label: 'Role', type: 'select', options: roleOpts },
+      { name: 'password', label: 'New password', type: 'password', hint: 'Leave blank to keep the current password' },
+      { name: 'active', label: 'Can log in', type: 'check' },
+    ], { ...u, password: '' }, (v) => api('/api/users/' + u.id, v, 'PUT'))) showEmployees();
+  };
+}
+
+// ---------- sales ----------
+const today = () => new Date().toLocaleDateString('en-CA');
+let salesFilter = null;
+async function showSales() {
+  const locs = await api('/api/locations');
+  salesFilter = salesFilter || { from: today(), to: today(), location_id: '', q: '' };
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const q = new URLSearchParams({ ...salesFilter, tz });
+  const data = await api('/api/sales?' + q);
+  const sum = (k) => data.totals[k];
+  const by = (m) => data.summary.find((r) => r.payment_method === m) || { total: 0, n: 0 };
+  $('#view').innerHTML = `<div class="bar"><h2>Sales</h2>
+      <input type="date" id="sFrom" value="${salesFilter.from}"> to <input type="date" id="sTo" value="${salesFilter.to}">
+      <select id="sLoc"><option value="">All locations</option>${locs.map((l) => `<option value="${l.id}" ${String(l.id) === salesFilter.location_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+      <input id="sQ" placeholder="🔎 Customer, company, phone, invoice #, PO" value="${esc(salesFilter.q || '')}" style="flex:1;min-width:240px"></div>
+    ${salesFilter.q ? `<div class="muted" style="margin:-6px 0 10px">Showing invoices matching "<b>${esc(salesFilter.q)}</b>" from all dates. <a href="#" id="sClear">Clear search</a></div>` : ''}
+    <div class="cards">
+      <div class="stat"><div>Total sales</div><b>${money(sum('total'))}</b></div>
+      <div class="stat"><div>Number of sales</div><b>${sum('n')}</b></div>
+      <div class="stat"><div>Sales tax collected</div><b>${money(sum('tax'))}</b></div>
+      <div class="stat"><div>Cash (${by('cash').n})</div><b>${money(by('cash').total)}</b></div>
+      <div class="stat"><div>Card (${by('card').n})</div><b>${money(by('card').total)}</b></div>
+      <div class="stat"><div>Other (${by('other').n})</div><b>${money(by('other').total)}</b></div>
+      ${by('gift_card').n ? `<div class="stat"><div>Paid with gift cards (${by('gift_card').n})</div><b>${money(by('gift_card').total)}</b></div>` : ''}
+      ${(() => {
+        const rf = (m) => (data.refunds || []).find((r) => r.method === m) || { n: 0, total: 0 };
+        if (!(data.refunds || []).length) return '';
+        return `<div class="stat refund"><div>Cash refunds (${rf('cash').n})</div><b>−${money(rf('cash').total)}</b></div>
+          <div class="stat"><div>Cash in drawer from sales</div><b>${money(by('cash').total - rf('cash').total)}</b></div>
+          <div class="stat"><div>Gift cards issued (${rf('gift_card').n})</div><b>${money(rf('gift_card').total)}</b></div>
+          <div class="stat"><div>Checks owed (${rf('check').n})</div><b>${money(rf('check').total)}</b></div>`;
+      })()}
+    </div>
+    <div class="tablewrap"><table class="list"><thead><tr><th>#</th><th>Time</th><th>Customer</th><th>Location</th><th>Cashier</th><th>Paid by</th><th class="num">Total</th><th></th></tr></thead><tbody>
+    ${data.sales.map((s) => `<tr class="${s.voided ? 'off' : ''}"><td>${s.id}</td><td>${new Date(s.created_at).toLocaleString()}</td>
+      <td>${s.customer_id ? `<a href="#" data-cust="${s.customer_id}">${esc(s.customer_name || 'Customer')}</a>` : esc(s.customer_name || '')}${s.po_number ? `<div class="muted" style="font-size:12px">PO ${esc(s.po_number)}</div>` : ''}</td>
+      <td>${esc(s.location_name)} · ${esc(s.register_name || '')}</td>
+      <td>${esc(s.cashier || '')}</td><td>${esc(paidByText(s))}</td><td class="num">${money(s.total_cents)}${s.voided ? ' <span class="pill off">Void</span>' : ''}</td>
+      <td style="white-space:nowrap"><button data-receipt="${s.id}">Receipt</button> <button data-invoice="${s.id}">Invoice</button> <button class="wa" data-send="${s.id}">Send</button>${s.voided ? '' : ` <button data-void="${s.id}">Void</button>`}</td></tr>`).join('')
+      || `<tr><td colspan="8" class="muted">${salesFilter.q ? 'No invoices match that search.' : 'No sales in this period.'}</td></tr>`}</tbody></table></div>`;
+  const refresh = () => { salesFilter = { from: $('#sFrom').value, to: $('#sTo').value, location_id: $('#sLoc').value, q: $('#sQ').value.trim() }; showSales(); };
+  $('#sFrom').onchange = refresh; $('#sTo').onchange = refresh; $('#sLoc').onchange = refresh;
+  let sTimer; $('#sQ').oninput = () => { clearTimeout(sTimer); sTimer = setTimeout(async () => { await refresh(); const i = $('#sQ'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 400); };
+  if ($('#sClear')) $('#sClear').onclick = (e) => { e.preventDefault(); salesFilter.q = ''; showSales(); };
+  $('#view').onclick = async (e) => {
+    const t = e.target;
+    if (t.dataset.receipt) window.open('/receipt?id=' + t.dataset.receipt, '_blank', 'width=420,height=700');
+    if (t.dataset.invoice) window.open('/invoice?id=' + t.dataset.invoice, '_blank', 'width=900,height=900');
+    if (t.dataset.send) openSendChooser(t.dataset.send);
+    if (t.dataset.cust) { e.preventDefault(); showCustomer(Number(t.dataset.cust)); }
+    if (t.dataset.void && confirm(`Void sale #${t.dataset.void}? It will be removed from the totals and tracked stock is put back.`)) {
+      try { await api(`/api/sales/${t.dataset.void}/void`, {}); toast('Sale voided'); showSales(); } catch (err) { toast(err.message, 'bad'); }
+    }
+  };
+}
+
+// ---------- settings ----------
+async function showSettings() {
+  const isOwner = role === 'owner' && me.business;
+  $('#view').innerHTML = `${isOwner ? `<div class="settings"><h2 style="margin-top:0">Business</h2>
+      <label>Business name</label><input id="bName" value="${esc(me.business.name)}">
+      <label>Accent color</label><input id="bColor" type="color" value="${esc(me.business.accent_color)}" style="height:44px;padding:4px">
+      <label>Logo image URL (https://…)</label><input id="bLogo" value="${esc(me.business.logo_url || '')}" placeholder="Optional">
+      <label>Look of the program</label><select id="bTheme">
+        ${[['classic', 'Classic: light gray & white'], ['ranch', 'Ranch: parchment & green'], ['dark', 'Dark: charcoal, lime & gold']]
+          .map(([v, t]) => `<option value="${v}" ${(me.business.theme || 'classic') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <label>Receipt emails: replies go to (leave blank to use the owner's login email)</label><input id="bReply" type="email" value="${esc(me.business.receipt_reply_email || '')}" placeholder="store@example.com">
+      <label>Bank & account for deposit slips (e.g. First Bank · acct ending 1234)</label><input id="bDep" value="${esc(me.business.deposit_account || '')}" placeholder="Optional">
+      ${me.business.rentals_enabled ? `<label>Rentals: a half day is how many hours?</label><input id="bHalf" type="number" min="1" max="12" value="${me.business.half_day_hours}">` : ''}
+      <button class="primary" style="margin-top:14px" id="saveBiz">Save business</button></div>` : ''}
+    ${isOwner ? `<div class="settings"><h2 style="margin-top:0">Round button (top left)</h2>
+      <p class="muted" style="margin-top:0">A picture in a circle at the top left of every screen. Tapping it opens your website.</p>
+      <div style="display:flex;gap:14px;align-items:center">
+        <div class="homeprev" id="hPrev">${me.business.home_image_v != null ? `<img src="/api/business/home-image?v=${me.business.home_image_v}" alt="">` : 'No picture'}</div>
+        <div><button type="button" id="hPick">Choose picture…</button> <button type="button" class="ghost" id="hRemove" ${me.business.home_image_v != null ? '' : 'hidden'}>Remove picture</button>
+          <input type="file" id="hFile" accept="image/*" hidden><div class="muted" style="font-size:13px;margin-top:6px">A square picture or logo looks best.</div></div></div>
+      <label>Web address it opens</label><input id="hLink" value="${esc(me.business.home_link || '')}" placeholder="lokaalhub.com">
+      <button class="primary" style="margin-top:14px" id="saveHome">Save round button</button></div>` : ''}
+    ${me.user.role === 'owner' ? `<div class="settings"><h2 style="margin-top:0">🔒 Support access</h2>
+      <p class="muted" style="margin-top:0">MultiPOS support can only open your account with a one-time code from you. When you ask for help,
+        support emails a code to you, or you can make one here and read it to them. Each code works once, for 15 minutes.</p>
+      <button type="button" id="supCode">Make a code for support</button>
+      <div id="supShow" hidden style="margin:12px 0;font-size:34px;font-weight:800;letter-spacing:8px"></div>
+      <div class="formhead">Who opened your account</div><div id="supLog" class="muted">Loading…</div></div>` : ''}
+    <div class="settings" id="mySec"><h2 style="margin-top:0">My login & backup email</h2>
+      <p class="muted" style="margin-top:0">Login: <b>${esc(me.user.email)}</b>. If you forget your password or lose that email, a reset link goes to your backup email too.</p>
+      <label>Backup email ${['owner', 'admin'].includes(me.user.role) ? '(required)' : '(optional)'}</label>
+      <input id="pBak" type="email" value="${esc(me.user.backup_email || '')}" placeholder="A different email you can always get into">
+      <label>New password (8+ characters, leave blank to keep it)</label><input id="pNew" type="password" autocomplete="new-password">
+      <label>Current password (needed to save)</label><input id="pCur" type="password" autocomplete="current-password">
+      <button class="primary" style="margin-top:14px" id="savePw">Save</button></div>`;
+  if (isOwner) {
+    let hImage = null, hRemove = false;
+    $('#hPick').onclick = () => $('#hFile').click();
+    $('#hFile').onchange = async () => {
+      const f = $('#hFile').files[0]; if (!f) return;
+      try { hImage = await resizeImage(f, 300); hRemove = false; $('#hPrev').innerHTML = `<img src="${hImage}" alt="">`; $('#hRemove').hidden = false; }
+      catch (e) { toast(e.message, 'bad'); }
+    };
+    $('#hRemove').onclick = () => { hImage = null; hRemove = true; $('#hPrev').textContent = 'No picture'; $('#hRemove').hidden = true; };
+    $('#saveHome').onclick = async () => {
+      try { await api('/api/business/home-button', { link: $('#hLink').value.trim(), image: hImage, remove_image: hRemove }, 'PUT');
+        toast('Saved'); setTimeout(() => location.reload(), 600); } catch (e) { toast(e.message, 'bad'); }
+    };
+  }
+  if (me.user.role === 'owner') {
+    const loadLog = async () => {
+      const r = await api('/api/support/log');
+      $('#supLog').innerHTML = r.log.length ? `<table class="list"><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${r.log.map((l) =>
+        `<tr><td>${fmtDateTime(l.created_at)}</td><td>${esc(l.user_name || '')}</td><td>${esc(l.action)}</td></tr>`).join('')}</tbody></table>`
+        : 'Nobody from support has opened your account.';
+    };
+    loadLog().catch((e) => { $('#supLog').textContent = e.message; });
+    $('#supCode').onclick = async () => {
+      try { const r = await api('/api/support/code', {}); $('#supShow').hidden = false;
+        $('#supShow').innerHTML = `${r.code.slice(0, 3)} ${r.code.slice(3)}<div class="muted" style="font-size:13px;letter-spacing:0;font-weight:400">Read this to support. It works once, for ${r.minutes} minutes.</div>`;
+        loadLog(); } catch (e) { toast(e.message, 'bad'); }
+    };
+  }
+  if (isOwner) $('#saveBiz').onclick = async () => {
+    try { await api('/api/business', { name: $('#bName').value, accent_color: $('#bColor').value, logo_url: $('#bLogo').value,
+      half_day_hours: $('#bHalf') ? $('#bHalf').value : null, deposit_account: $('#bDep').value, receipt_reply_email: $('#bReply').value, theme: $('#bTheme').value }, 'PUT'); toast('Saved'); setTimeout(() => location.reload(), 600); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+  $('#savePw').onclick = async () => {
+    try { const r = await api('/api/me/password', { current: $('#pCur').value, password: $('#pNew').value, backup_email: $('#pBak').value });
+      me.user.backup_email = r.backup_email; $('#bakNag').hidden = true; toast('Saved'); $('#pCur').value = $('#pNew').value = ''; }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
+const views = { businesses: showBusinesses, products: showProducts, pending: showPending, refunds: showRefunds,
+  customers: showCustomers, reports: showReports, deposits: showDeposits, quickbooks: showQuickBooks, locations: showLocations, employees: showEmployees, sales: showSales, settings: showSettings };
+function route() {
+  const tabs = TABS.filter((t) => t.show());
+  let id = location.hash.slice(1).split('?')[0];
+  if (!tabs.some((t) => t.id === id)) id = tabs[0].id;
+  $('#nav').innerHTML = (me.business ? '<a href="/checkout">Checkout</a>' : '') +
+    tabs.map((t) => `<a href="#${t.id}" class="${t.id === id ? 'active' : ''}">${t.label}</a>`).join('');
+  $('#view').onclick = null;
+  setPendingBadge(pendingCount);
+  if (me.business && id !== 'pending') api('/api/pending/count').then((r) => setPendingBadge(r.pending_count)).catch(() => {});
+  views[id]().catch((e) => toast(e.message, 'bad'));
+}
+
 (async () => {
-  const me = await api('/api/me');
-  const r = await api(`/api/customers/${encodeURIComponent(q.get('id'))}/sales?` + new URLSearchParams({ from: q.get('from') || '', to: q.get('to') || '', q: q.get('q') || '' }));
-  const c = r.customer, t = r.totals;
-  const range = r.from || r.to ? `${r.from ? longDate(r.from) : 'Beginning'} – ${r.to ? longDate(r.to) : 'today'}` : 'All dates';
-  document.title = `Invoices · ${c.name}`;
-  $('#p').innerHTML = `<div class="top">
-      <div class="cust"><div class="lbl">CUSTOMER</div><b>${esc(c.name)}</b>${c.company ? '<br>' + esc(c.company) : ''}${c.address ? '<br>' + esc(c.address).replace(/\n/g, '<br>') : ''}${c.phone ? '<br>' + esc(c.phone) : ''}${c.email ? '<br>' + esc(c.email) : ''}</div>
-      <div style="text-align:right">${me.business.logo_url ? `<img src="${esc(me.business.logo_url)}" alt="" style="max-height:60px;max-width:200px"><br>` : ''}<h1>${esc(me.business.name)}</h1>
-        <h2 style="margin-top:10px">INVOICE HISTORY</h2><div>${range}</div>${q.get('q') ? `<div class="muted">Search: "${esc(q.get('q'))}"</div>` : ''}
-        <div class="muted">Printed ${new Date().toLocaleDateString()}</div></div></div>
-    <div class="box"><div>Invoices<div class="amt">${t.n}</div></div><div>Sales tax<div class="amt">${money(t.tax)}</div></div>
-      ${t.on_account ? `<div>Charged to account<div class="amt">${money(t.on_account)}</div></div>` : ''}<div style="text-align:right">Total<div class="due">${money(t.total)}</div></div></div>
-    <table><thead><tr><th>Date</th><th>Invoice</th><th>PO / job site</th><th>Paid by</th><th class="n">Total</th></tr></thead><tbody>
-      ${r.sales.map((s) => `<tr class="${s.voided ? 'void' : ''}"><td>${new Date(s.created_at).toLocaleDateString()}</td><td>#${s.id}${s.voided ? ' (void)' : ''}</td>
-        <td>${s.po_number ? 'PO ' + esc(s.po_number) : ''}${s.job_address ? '<div class="sub">' + esc(s.job_address) + '</div>' : ''}${s.invoice_note ? '<div class="sub">Note: ' + esc(s.invoice_note) + '</div>' : ''}</td>
-        <td>${esc(paidByText(s))}</td><td class="n">${money(s.total_cents)}</td></tr>`).join('') || '<tr><td colspan="5">No invoices.</td></tr>'}</tbody></table>
-    <p class="muted" style="margin-top:18px">Voided invoices are shown crossed out and are not included in the totals.</p>`;
-})().catch((e) => { $('#p').textContent = e.message; });
+  me = await api('/api/me');
+  role = me.user.role === 'admin' ? 'owner' : me.user.role;
+  if (me.user.role === 'cashier') { location.href = '/checkout'; return; }
+  if (me.business) { applyBrand(me.business); $('#bizName').textContent = me.business.name; }
+  if (['owner', 'admin'].includes(me.user.role) && !me.user.backup_email) $('#bakNag').hidden = false;
+  if (me.user.role === 'admin' && me.business) {
+    $('#actingBanner').hidden = false; $('#actingName').textContent = me.business.name;
+    if (me.acting_until) $('#actingLeft').textContent = ` until ${new Date(me.acting_until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  window.addEventListener('hashchange', route);
+  route();
+})().catch((e) => toast(e.message, 'bad'));
 </script>
 </body>
 </html>
