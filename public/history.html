@@ -36,6 +36,7 @@
 const q = new URLSearchParams(location.search);
 const longDate = (v) => new Date(v + 'T12:00:00').toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
 (async () => {
+  if (!/^\d+$/.test(q.get('id') || '')) { $('#p').textContent = 'Open this from a customer: Manage → Customers → pick a customer → Invoices → Print list.'; return; }
   const me = await api('/api/me');
   const r = await api(`/api/customers/${encodeURIComponent(q.get('id'))}/sales?` + new URLSearchParams({ from: q.get('from') || '', to: q.get('to') || '', q: q.get('q') || '' }));
   const c = r.customer, t = r.totals;
