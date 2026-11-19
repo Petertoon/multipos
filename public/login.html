@@ -16,10 +16,28 @@
   <input id="pw" type="password" autocomplete="current-password" required>
   <button class="primary" type="submit">Sign in</button>
   <div class="err" id="err"></div>
+  <p style="text-align:center;margin:14px 0 0"><a href="#" id="forgot">Forgot password?</a></p>
+</form>
+<form class="auth" id="ff" hidden>
+  <h1>Forgot password</h1>
+  <div class="muted">Enter your login email. We'll email a link to choose a new password to your login email and your backup email.</div>
+  <label for="femail">Login email</label>
+  <input id="femail" type="email" autocomplete="username" required>
+  <button class="primary" type="submit">Email me a reset link</button>
+  <div class="err" id="ferr"></div>
+  <div class="muted" id="fok" hidden style="margin-top:12px">If that email has a MultiPOS login, a reset link is on its way to it and to its backup email. It works for 30 minutes. Check spam too.</div>
+  <p style="text-align:center;margin:14px 0 0"><a href="#" id="back">Back to sign in</a></p>
 </form>
 <script src="/app.js"></script>
 <script>
 api('/api/setup-status').then((s) => { if (s.needs_setup) location.href = '/setup'; });
+$('#forgot').onclick = (e) => { e.preventDefault(); $('#f').hidden = true; $('#ff').hidden = false; $('#femail').value = $('#email').value; $('#femail').focus(); };
+$('#back').onclick = (e) => { e.preventDefault(); $('#ff').hidden = true; $('#f').hidden = false; };
+$('#ff').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('#ferr').textContent = '';
+  try { await api('/api/password/forgot', { email: $('#femail').value }); $('#fok').hidden = false; }
+  catch (err) { $('#ferr').textContent = err.message; }
+});
 $('#f').addEventListener('submit', async (e) => {
   e.preventDefault(); $('#err').textContent = '';
   try {
